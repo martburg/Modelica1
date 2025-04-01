@@ -312,34 +312,34 @@ package TwoPhase1
     initial equation
       level = 10;
       der(v) = 0;
-// Start from rest
+      // Start from rest
     equation
-// Mass definitions
+      // Mass definitions
       m_l = A * level * phaseTransfer.rho_l;
       m_v = A * (L - level) * phaseTransfer.rho_v;
       m_t = m_l + m_v;
-// Velocity, Acceleration
+      // Velocity, Acceleration
       v = der(level);
       a = der(v);
-// Force balance
+      // Force balance
       m_t * a = (p_delta * A) - (m_t * g_n);
-// connect heatPort.T to medium
+      // connect heatPort.T to medium
       T_heatPort = phaseTransfer.T_med;
-// Energy Balance
+      // Energy Balance
       der(U_in) = U_in_flow;
       der(U_out) = U_out_flow;
       U_in_flow = port_a.m_flow * actualStream(port_a.h_outflow);
       U_out_flow = port_b.m_flow * actualStream(port_b.h_outflow);
       der(U) = U_in_flow + U_out_flow + (q_F - phaseTransfer.q_phase);
       T_U = U / ((m_l * phaseTransfer.cp_l) + (m_v * phaseTransfer.cp_v)) + 273.15;
-// Mass balance using phase transfer output
+      // Mass balance using phase transfer output
       der(m_l) = port_a.m_flow - phaseTransfer.m_dot_phase;
       der(m_v) = port_b.m_flow + phaseTransfer.m_dot_phase;
-//Enthalpy equations
+      //Enthalpy equations
       port_a.h_outflow = phaseTransfer.h_l;
       port_b.h_outflow = phaseTransfer.h_v;
-// Physical constraint
-//assert(level >= 0 and level <= L, "Water height out of bounds: " + String(level));
+      // Physical constraint
+      //assert(level >= 0 and level <= L, "Water height out of bounds: " + String(level));
       annotation(Dialog(group = "Geometry"), uses(Modelica(version = "4.0.0")), Icon(coordinateSystem(extent = {{-100, -100}, {100, 100}}, preserveAspectRatio = true, initialScale = 0.1, grid = {10, 10}), graphics = {Rectangle(visible = true, origin = {-0.177, 0}, fillColor = {255, 255, 255}, extent = {{-80.177, -20}, {80.177, 20}}), Line(visible = true, origin = {-90, 0}, points = {{-10, 0}, {10, 0}}), Line(visible = true, origin = {90, 0}, points = {{-10, 0}, {10, 0}}), Rectangle(visible = true, origin = {-33.32, 0}, fillColor = {0, 0, 255}, fillPattern = FillPattern.Solid, extent = {{-46.68, -20}, {46.68, 20}})}), Documentation(info = "<html><div>
 <h2>Corrected Vertical Two-Phase Pipe Model</h2>
 </div>
@@ -390,42 +390,37 @@ package TwoPhase1
       if phaseTransfer.PhaseChangeModel <> "EnergyDriven" then
         T_U = T_U_Start;
       end if;
-//else
-//  T_U = phaseTransfer.Tsat_v;
-//end if;
-//level = 5;
-//der(v) = 0;
     equation
-// Mass definitions
+      // Mass definitions
       m_l = A * level * phaseTransfer.rho_l;
       m_v = A * (L - level) * phaseTransfer.rho_v;
       m_t = m_l + m_v;
-// Velocity
+      // Velocity
       v = der(level);
-//
-// Force balance
+      //
+      // Force balance
       der(v) = (p_delta * A - m_t * g_n - v * der(m_t)) / m_t;
-//
-// connect heatPort.T to medium
+      //
+      // connect heatPort.T to medium
       T_heatPort = T_U;
-//
-// Energy Balance
-      der(U) = port_a.m_flow * actualStream(port_a.h_outflow) + port_b.m_flow * actualStream(port_b.h_outflow) + (q_F - phaseTransfer.q_phase) - m_t * g_n * v;
+      //
+      // Energy Balance
+      der(U) = port_a.m_flow * actualStream(port_a.h_outflow) + port_b.m_flow * actualStream(port_b.h_outflow) + (q_F - phaseTransfer.q_phase) - (der(m_t) * g_n * v + m_t * g_n * der(v));
       if phaseTransfer.PhaseChangeModel <> "EnergyDriven" then
         T_U = U / ((m_l * phaseTransfer.cp_l) + (m_v * phaseTransfer.cp_v)) + 273.15;
       else
         T_U = phaseTransfer.Tsat_v;
       end if;
-//
-// Mass balance using phase transfer output
+      //
+      // Mass balance using phase transfer output
       der(m_l) = port_a.m_flow - phaseTransfer.m_dot_phase;
       der(m_v) = port_b.m_flow + phaseTransfer.m_dot_phase;
-//
-//Enthalpy equations
+      //
+      //Enthalpy equations
       port_a.h_outflow = phaseTransfer.h_l;
       port_b.h_outflow = phaseTransfer.h_v;
-//
-// Physical constraint
+      //
+      // Physical constraint
       if abs(phaseTransfer.sigma) >= 1e-10 then
         CHF = A_rosh * 0.131 * (phaseTransfer.h_v - phaseTransfer.h_l) * phaseTransfer.rho_v * sqrt(g_n * (phaseTransfer.rho_l - phaseTransfer.rho_v) / phaseTransfer.sigma);
       else
@@ -568,7 +563,7 @@ package TwoPhase1
         Real Pr = 1.76;
       equation
         q_phase = A_rosh * ((cp_l * (T_l - Tsat_v)) / ((h_v - h_l) * Pr ^ n_boiling * C_sf)) ^ 3 * mu_l * (h_v - h_l) * sqrt(((rho_l - rho_v)) / sigma);
-//q_phase = C_boiling * sqrt(mu_l * g_n / sigma) * (h_v - h_l) * Pr ^ n_boiling * (T_l - Tsat_v) ^ 3;
+        //q_phase = C_boiling * sqrt(mu_l * g_n / sigma) * (h_v - h_l) * Pr ^ n_boiling * (T_l - Tsat_v) ^ 3;
         m_dot_phase = q_phase / (h_v - h_l);
         annotation(Documentation(info = "<html><div>
 <div>
