@@ -34,7 +34,7 @@ def equilibrium_residuals(positions_flat, P1, P2, n, s0_list, total_mass, c_real
 
         F_left, length_left = compute_spring_force(left, mid, s0_list[i - 1], c_real)
         F_right, length_right = compute_spring_force(right, mid, s0_list[i], c_real)
-        F_gravity = np.array([0, 0, -m * g_scaled])
+        F_gravity = np.array([0, -m * g_scaled,0])
         net_force = F_left + F_right + F_gravity
 
         residuals.append(net_force)
@@ -51,7 +51,7 @@ def refined_initial_guess(P1, P2, n, max_sag=0.5):
         point = (1 - t) * P1 + t * P2
         # Gradually increase the sag with cubic function, more natural curve
         sag = -max_sag * (1 - 4 * t * (1 - t))  # Cubic curve sag
-        point[2] += sag
+        point[1] += sag
         guesses.append(point)
     return np.array(guesses)
 
@@ -107,8 +107,8 @@ def plot_spring_mass_system(P1, P2, mass_positions, spring_lengths):
 
 
     ax1.set_xlabel('X')
-    ax1.set_ylabel('Y')
-    ax1.set_zlabel('Z (sag downward)')
+    ax1.set_ylabel('Y (sag downward)')
+    ax1.set_zlabel('Z')
     ax1.set_title('Mass-Spring Chain in 3D')
     ax1.legend()
     ax1.view_init(elev=20, azim=-60)
@@ -158,11 +158,11 @@ def verify_equilibrium_real_units(P1, P2, positions, s0_list, c, total_mass, g=9
         print("❌ Some masses are NOT in force equilibrium!")
 
 if __name__ == "__main__":
-    P1 = np.array([15, -7, 0])
-    P2 = np.array([-15, 70, 0])
-    n = 50
+    P1 = np.array([-1, 0, 5])
+    P2 = np.array([1, 0, 0])
+    n = 10
     total_length = np.linalg.norm(P2 - P1)
-    s0_list = [total_length / n] * n
+    s0_list = [(total_length / n)*0.9] * n
     c = 100
     total_mass = 20
 

@@ -305,6 +305,35 @@ coordinates";
         pos[i, 3] := 0;
       end for;
     end computeStaticPositions;
+
+    function formatFixed3_3
+      input Real x;
+      output String s;
+    protected
+      Integer whole;
+      Integer frac;
+    algorithm
+      // Round to 3 decimal places
+      whole := integer(x);
+      frac := integer(abs(x - whole) * 1000 + 0.5);
+      // 3 decimal digits
+      // Force leading zeros/padding for whole part
+      if abs(whole) < 10 then
+        s := "  " + String(whole) + ".";
+      elseif abs(whole) < 100 then
+        s := " " + String(whole) + ".";
+      else
+        s := String(whole) + ".";
+      end if;
+      // Always print 3 digits in fractional part
+      if frac < 10 then
+        s := s + "00" + String(frac);
+      elseif frac < 100 then
+        s := s + "0" + String(frac);
+      else
+        s := s + String(frac);
+      end if;
+    end formatFixed3_3;
     annotation(Icon(coordinateSystem(extent = {{-100, -100}, {100, 100}}, preserveAspectRatio = true, initialScale = 0.1, grid = {10, 10}), graphics = {Polygon(visible = true, origin = {0.248, 0.044}, lineColor = {56, 56, 56}, fillColor = {128, 202, 255}, fillPattern = FillPattern.Solid, points = {{99.752, 100}, {99.752, 59.956}, {99.752, -50}, {100, -100}, {49.752, -100}, {-19.752, -100.044}, {-100.248, -100}, {-100.248, -50}, {-90.248, 29.956}, {-90.248, 79.956}, {-40.248, 79.956}, {-20.138, 79.813}, {-0.248, 79.956}, {19.752, 99.956}, {39.752, 99.956}, {59.752, 99.956}}, smooth = Smooth.Bezier), Polygon(visible = true, origin = {0, -13.079}, lineColor = {192, 192, 192}, fillColor = {255, 255, 255}, pattern = LinePattern.None, fillPattern = FillPattern.HorizontalCylinder, points = {{100, -86.921}, {50, -86.921}, {-50, -86.921}, {-100, -86.921}, {-100, -36.921}, {-100, 53.079}, {-100, 103.079}, {-50, 103.079}, {0, 103.079}, {20, 83.079}, {50, 83.079}, {100, 83.079}, {100, 33.079}, {100, -36.921}}, smooth = Smooth.Bezier), Polygon(visible = true, origin = {0, -10.704}, lineColor = {113, 113, 113}, fillColor = {255, 255, 255}, points = {{100, -89.296}, {50, -89.296}, {-50, -89.296}, {-100, -89.296}, {-100, -39.296}, {-100, 50.704}, {-100, 100.704}, {-50, 100.704}, {0, 100.704}, {20, 80.704}, {50, 80.704}, {100, 80.704}, {100, 30.704}, {100, -39.296}}, smooth = Smooth.Bezier), Ellipse(visible = true, origin = {0, -15}, lineColor = {56, 56, 56}, fillColor = {192, 192, 192}, fillPattern = FillPattern.Solid, extent = {{-60, -60}, {60, 60}}), Ellipse(visible = true, origin = {0.257, -15.258}, lineColor = {56, 56, 56}, fillColor = {244, 244, 244}, fillPattern = FillPattern.Solid, extent = {{-45.257, -45.257}, {45.257, 45.257}}), Rectangle(visible = true, origin = {-0.219, -15.813}, rotation = 45, lineColor = {192, 192, 192}, fillColor = {192, 192, 192}, fillPattern = FillPattern.Solid, extent = {{-46.497, -8.082}, {46.497, 8.082}}), Line(visible = true, origin = {6.058, -20.995}, points = {{31.492, 31.535}, {-31.492, -31.535}}), Line(visible = true, origin = {-5.572, -9.534}, points = {{31.492, 31.535}, {-31.492, -31.535}})}));
   end Helpers;
 
@@ -432,22 +461,21 @@ coordinates";
     // Parameters
     parameter Integer n = 10 "Number of springs";
     parameter Integer m = n - 1 "Number of bodies";
-    parameter Modelica.Units.SI.Position[3] f1_r = {15, 0, -7} "Left fixed point";
-    parameter Modelica.Units.SI.Position[3] f2_r = {-15, 0, 7} "Right fixed point";
+    parameter Modelica.Units.SI.Position[3] f1_r = {-10, 0, 0} "Left fixed point";
+    parameter Modelica.Units.SI.Position[3] f2_r = {10, 10, 0} "Right fixed point";
     parameter Modelica.Units.SI.TranslationalSpringConstant c = 100 "Spring constant";
     parameter Modelica.Units.SI.Mass m_t = 20;
     final parameter Modelica.Units.SI.Length totalDistance = Modelica.Math.Vectors.length(f1_r - f2_r);
-    final parameter Modelica.Units.SI.Length s_unstretched = ((totalDistance / n) * 1.1);
+    final parameter Modelica.Units.SI.Length s_unstretched = ((totalDistance / n) * 0.9);
+    final parameter Real s_list[n] = {s_unstretched for i in 1:n};
     final parameter Modelica.Units.SI.Mass m_s = m_t / m;
     final parameter Modelica.Units.SI.Acceleration g = world.g "Gravity magnitude";
     final parameter Modelica.Units.SI.Position body_r_0[m, 3](each fixed = false);
+    final parameter Real g_dir[3] = {0, 1, 0};
     //
     //
     //
-    final parameter Modelica.Units.SI.Position pos[m, 3] = Helpers.computeStaticPositions(m = m, L = totalDistance, c = c, m_s = m_s, g = g, s_unstretched = s_unstretched);
-    //
-    //
-    final parameter Modelica.Units.SI.Position body_r_A[m, 3] = C_StaticPositions(n = n, f1_r = f1_r, f2_r = f2_r, totalMass = m_t, springConstant = c, s_unstretched = s_unstretched, gravity = g);
+    final parameter Modelica.Units.SI.Position body_r_A[m, 3] = solveSpringMass(P1 = f1_r, P2 = f2_r, n = n, s0 = s_list, c = c, total_mass = m_t, g = g, g_dir = g_dir);
     //
     Modelica.Mechanics.MultiBody.Parts.Fixed fixed1(r = f1_r, shapeType = "sphere", length = 0.1, width = 0.1, height = 0.1, r_shape = {fixed1.r[1] + (fixed1.length / 2), fixed1.r[2], fixed1.r[3]}, lengthDirection = {-1, 0, 0}, color = {0, 180, 0}) annotation(Placement(visible = true, transformation(origin = {-70, 0}, extent = {{-10, -10}, {10, 10}}, rotation = 0)));
     //
@@ -458,29 +486,43 @@ coordinates";
     Modelica.Mechanics.MultiBody.Parts.Body bodies[m](each m = m_s, each r_0.fixed = false, r_0.start = body_r_0) annotation(Placement(visible = true, transformation(origin = {0, -30}, extent = {{-10, -10}, {10, 10}}, rotation = -90)));
     //
     //
+    //
+    // WSM searches in Resources/Library
+    //
 
-    function C_StaticPositions
+    function solveSpringMass
+      input Real P1[3];
+      input Real P2[3];
       input Integer n;
-      input Real f1[3], f2[3];
-      input Real totalMass;
-      input Real springConstant;
-      input Real s_unstretched;
-      input Real gravity;
-      output Real pos[n - 1, 3];
-    external "C"
-      CStaticPositions_c(n, f1, f2, totalMass, springConstant, s_unstretched, gravity, pos)
-        annotation(
-          Library = "MySolverLib"
-        );
-    end C_StaticPositions;
+      input Real s0[n];
+      input Real c;
+      input Real total_mass;
+      input Real g;
+      input Real g_dir[3];
+      output Real positions[n - 1, 3];
+    protected
+      Real g_vec[3] := g * g_dir;
+    algorithm
 
+    external "C"
+      solve_spring_mass_c(P1, P2, n, c, total_mass, g_vec, positions)
+        annotation(
+          Library = "spring_solver",
+          LibraryDirectory = "modelica://Ropes/Resources/Library"
+        );
+    end solveSpringMass;
+
+    //
     //
     //
   initial equation
-    //body_r_0 = pos_global;
-    body_r_0 = pos;
+    body_r_0 = body_r_A;
+    //body_r_0 = pos;
+    //for i in 1:n - 1 loop
+    //  Modelica.Utilities.Streams.print(Helpers.formatFixed3_3(body_r_A[i, 1]) + "  " + Helpers.formatFixed3_3(body_r_A[i, 2]) + "  " + Helpers.formatFixed3_3(body_r_A[i, 3]));
+    //end for;
     for i in 1:m loop
-      der(bodies[i].r_0) = zeros(3);
+      //der(bodies[i].r_0) = zeros(3);
       // Zero initial velocity
       der(bodies[i].v_0) = zeros(3);
       // Zero initial acceleration

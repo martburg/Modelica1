@@ -1,0 +1,3 @@
+LIBRARY spring_solver
+EXPORTS
+    solve_spring_mass_c
