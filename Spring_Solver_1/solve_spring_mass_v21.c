@@ -223,13 +223,18 @@ static void dynamic_relaxation(
 
     double omega = sqrt(c / m);
     double dt = fmin(dt_given, 0.05 / omega);
-    double damping = 2.5 * sqrt(c / m);
     double stop_threshold = 1e-4;
     double k_end_correction = 2.0 * c;
 
     double prev_energy = HUGE_VAL;
     double kinetic_prev = 1e10; // start big
     double kinetic_now = 0.0;
+    double kinetic_stop_threshold = 1e-12;
+    double dt_min = 1e-6;
+    double dt_max = 0.02 / omega;
+    double damping = 5.0 * sqrt(c / m); // Higher starting damping
+    double damping_min = 0.5 * sqrt(c / m);
+    double damping_decay = 0.9999; // Slow decay
 
     printf("\n=== Dynamic Relaxation Start ===\n");
 
@@ -274,18 +279,28 @@ static void dynamic_relaxation(
         }
 
         if (step % 500 == 0) {
-            double kinetic_energy = 0.5 * m * v_norm_sq;
             double potential_energy = compute_energy(x, P1, P2, n, s0, c, m, g_vec);
             printf("Step %d: KE=%.6e, PE=%.6e, dPE=%.3e\n",
-                   step, kinetic_energy, potential_energy,
+                   step, kinetic_now, potential_energy,
                    fabs(prev_energy - potential_energy));
             prev_energy = potential_energy;
         }
-
-        if (sqrt(v_norm_sq) < stop_threshold) {
-            printf("Dynamic relaxation converged at step %d\n", step);
+        if (kinetic_now < kinetic_stop_threshold) {
+            printf("KINETIC Dynamic relaxation converged at step %d\n", step);
             break;
         }
+
+        // --- Adaptive control based on kinetic energy ---
+        if (kinetic_now > 1.1 * kinetic_prev) {
+            dt = fmax(dt * 0.5, dt_min);
+            damping = fmin(damping * 1.2, 10.0 * sqrt(c / m)); // increase damping if blowing up
+            printf("increase Damping %e6 dt = %e6\n",damping,dt);
+        } else {
+            dt = fmin(dt * 1.05, dt_max);
+            damping = fmax(damping * damping_decay, damping_min);
+            printf("decrease Damping %e6 dt = %e6\n",damping,dt);
+        }
+        kinetic_prev = kinetic_now;
     }
 
     printf("=== Dynamic Relaxation End ===\n");
