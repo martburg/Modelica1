@@ -3,29 +3,30 @@
 	"tasks": [
 		{
 			"type": "cppbuild",
-			"label": "C/C++: cl.exe build active file",
-			"command": "cl.exe",
+			"label": "C/C++: clang build active file as .so",
+			"command": "/usr/bin/clang",
 			"args": [
-				"/EHsc",
-				"/nologo",
+				"-fcolor-diagnostics",
+				"-fansi-escape-codes",
+				"-g",
+				"-fPIC",
+				"-shared",
 				"${file}",
-				"/LD",                         // build as DLL
-				"/Fe:..\\Resources\\Library\\spring_solver.dll",
-				"/Fo:spring_solver.obj", // OBJ output path
-				"/link",
-				"/IMPLIB:..\\spring_solver.lib" // LIB output path
+				"-o",
+				"${workspaceFolder}/Resources/Library/${fileBasenameNoExtension}.so",
+				"-lm"
 			],
 			"options": {
 				"cwd": "${fileDirname}"
 			},
 			"problemMatcher": [
-				"$msCompile"
+				"$gcc"
 			],
 			"group": {
 				"kind": "build",
 				"isDefault": true
 			},
-			"detail": "compiler: cl.exe"
+			"detail": "compiler: /usr/bin/clang"
 		}
 	]
 }

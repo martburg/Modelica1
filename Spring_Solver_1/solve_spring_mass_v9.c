@@ -8,20 +8,6 @@
 #define LS_REDUCTION 0.5
 #define LS_MAX_TRIALS 8
 
-static void compute_spring_force(const double *p1, const double *p2, double s0, double c, double *F_out) {
-    double delta[3];
-    double length_sq = 0.0;
-    for (int i = 0; i < 3; ++i) {
-        delta[i] = p2[i] - p1[i];
-        length_sq += delta[i] * delta[i];
-    }
-    double length = sqrt(length_sq);
-    if (length < 1e-12) length = 1e-12; // prevent division by zero
-    double coeff = -(length - s0) * c / length;
-    for (int i = 0; i < 3; ++i)
-        F_out[i] = coeff * delta[i];
-}
-
 static void compute_residuals(
     const double *positions_flat, const double *P1, const double *P2, int n,
     double s0, double c, double m, const double* g_vec, double scale_pos, double *residuals_out)

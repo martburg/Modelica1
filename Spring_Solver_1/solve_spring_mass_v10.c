@@ -274,40 +274,6 @@ static void dynamic_relaxation(
             converged = 1;
             break;
         }
-/*
-        // If v_norm not trending down: c-stiffening
-        if (step % 500== 0){
-            if (allow_c_relaxation && step > 0 ) {
-                if (moving_average_vnorm > 2.2e1) {
-                    if (c_stiffened < 40) {
-                        c *= 100.0;
-                        printf("Convergence stagnated. Stiffening c to  %e\n", c);
-                        dt_base = fmin(dt_given, 0.05 / sqrt(c / m));
-                        k_end_correction = 2.0 * c;
-                        damping_base = 2.5 * sqrt(c / m);
-                        // Recompute s0_adapted
-                        for (int i = 0; i < n; ++i) {
-                            int masses_below = n - i;
-                            s0_adapted[i] = (L / n) + (m * g_norm * masses_below) / c;
-                        }
-                        c_stiffened += 1;  // ad 1 to 
-                    } else {
-                        printf("Stiffened %i times\n",c_stiffened);
-                    }
-                } else if ( moving_average_vnorm <= 2.2e1) {
-                    c =  c * 0.95;
-                    printf("Convergence OK Stiffening c to  %e\n", c);
-                    dt_base = fmin(dt_given, 0.05 / sqrt(c / m));
-                    k_end_correction = 2.0 * c;
-                    damping_base = 2.5 * sqrt(c / m);
-                    for (int i = 0; i < n; ++i) {
-                        int masses_below = n - i;
-                        s0_adapted[i] = (L / n) + (m * g_norm * masses_below) / c;
-                    }
-                }
-            }
-        }*/
-    }
 
     if (!converged)
         printf("Dynamic relaxation did NOT fully converge after %d steps.\n", max_steps);

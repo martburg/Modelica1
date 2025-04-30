@@ -167,14 +167,15 @@ static void compute_energy_gradient(
 }
 static void dynamic_relaxation(
     double* x, const double* P1, const double* P2, int n,
-    double s0, double c, double m, const double* g_vec,
+    double s0, double c_in, double m, const double* g_vec,
     double dt_given, int max_steps)
 {
     int dof = (n-1) * 3;
     double* v = calloc(dof, sizeof(double));
     double* F = calloc(dof, sizeof(double));
-    double* s0_adapted = calloc(n, sizeof(double)); // adapted spring lengths
+    double* s0_adapted = calloc(n, sizeof(double));
 
+    // --- Rope and gravity properties ---
     double dx_line[3] = {P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]};
     double L = sqrt(dx_line[0]*dx_line[0] + dx_line[1]*dx_line[1] + dx_line[2]*dx_line[2]);
     double e_rope[3] = {dx_line[0]/L, dx_line[1]/L, dx_line[2]/L};
@@ -182,6 +183,16 @@ static void dynamic_relaxation(
     double g_norm = sqrt(g_vec[0]*g_vec[0] + g_vec[1]*g_vec[1] + g_vec[2]*g_vec[2]);
     double e_g[3] = {g_vec[0]/g_norm, g_vec[1]/g_norm, g_vec[2]/g_norm};
 
+    double dot_rope_gravity = fabs(e_rope[0]*e_g[0] + e_rope[1]*e_g[1] + e_rope[2]*e_g[2]);
+
+    int allow_c_relaxation = (dot_rope_gravity > 0.95);  // near-parallel rope-gravity
+
+    double c = c_in;  // start with user-given c
+    int c_stiffened = 0;  // flag if c is being gradually reduced
+    int c_relaxed = 0;  // flag if c is being gradually reduced
+    double c_start = c;
+
+    // --- Gravity component perpendicular to rope ---
     double dot_g_rope = e_g[0]*e_rope[0] + e_g[1]*e_rope[1] + e_g[2]*e_rope[2];
     double g_perp[3] = {
         e_g[0] - dot_g_rope * e_rope[0],
@@ -197,43 +208,49 @@ static void dynamic_relaxation(
         g_perp[0] = g_perp[1] = g_perp[2] = 0.0;
     }
 
+    // --- Precompute adapted s0 ---
     for (int i = 0; i < n; ++i) {
         int masses_below = n - i;
         s0_adapted[i] = (L / n) + (m * g_norm * masses_below) / c;
     }
 
+    // --- Initialize straight + sag ---
     double T0 = c * s0;
     double a = (T0 > 0 && g_norm > 0) ? (T0 / (m * g_norm)) : 1.0;
 
     for (int i = 0; i < n-1; ++i) {
         double t = (double)(i+1) / (double)n;
         for (int j = 0; j < 3; ++j)
-            x[i*3+j] = (1.0 - t) * P1[j] + t * P2[j];
+            x[i*3+j] = (1.0 - t)*P1[j] + t*P2[j];
 
         double s = t * L;
         double sag_amount = a * (cosh(s/a) - 1.0);
-
         for (int j = 0; j < 3; ++j)
             x[i*3+j] += sag_amount * g_perp[j];
     }
 
+    // --- Print initial relaxed positions ---
     printf("\nInitial relaxed positions before relaxation:\n");
     for (int i = 0; i < n-1; ++i)
         printf("Node %d: [%.6f, %.6f, %.6f]\n", i+1, x[i*3+0], x[i*3+1], x[i*3+2]);
 
-    double omega = sqrt(c / m);
-    double dt = fmin(dt_given, 0.05 / omega);
-    double damping = 2.5 * sqrt(c / m);
+    // --- Relaxation parameters ---
     double stop_threshold = 1e-4;
+    double dt_base = fmin(dt_given, 0.05 / sqrt(c / m));
+    double damping_base = 2.5 * sqrt(c / m);
     double k_end_correction = 2.0 * c;
 
-    double prev_energy = HUGE_VAL;
-    double kinetic_prev = 1e10; // start big
-    double kinetic_now = 0.0;
+    // For monitoring
+    double last_vnorm = 1e10;
+    double moving_average_vnorm = 1e10;
+    const double alpha = 0.05;  // moving average update factor
 
-    printf("\n=== Dynamic Relaxation Start ===\n");
+    int converged = 0;
+    int step = 0;
+    int max_c_stiffen_steps = 5000;
 
-    for (int step = 0; step < max_steps; ++step) {
+    // --- Main relaxation loop ---
+    for (step = 0; step < max_steps; ++step) {
         memset(F, 0, dof * sizeof(double));
 
         for (int i = 0; i < n-1; ++i) {
@@ -246,8 +263,9 @@ static void dynamic_relaxation(
             compute_spring_force(next, mid, s0_adapted[i+1], c, F_r);
 
             for (int j = 0; j < 3; ++j)
-                F[i*3+j] = F_l[j] + F_r[j] + m * g_vec[j] - damping * v[i*3+j];
+                F[i*3+j] = F_l[j] + F_r[j] + m * g_vec[j] - 2.5 * sqrt(c / m) * v[i*3+j];
 
+            // Soft end constraint
             double p_minus_p1[3] = {
                 mid[0] - P1[0],
                 mid[1] - P1[1],
@@ -263,37 +281,69 @@ static void dynamic_relaxation(
                     F[i*3+j] += -k_end_correction * (mid[j] - P2[j]);
             }
         }
-        kinetic_now = 0.0;
+
+        // --- Update positions and velocities ---
         double v_norm_sq = 0.0;
         for (int i = 0; i < dof; ++i) {
             double a = F[i] / m;
-            v[i] += a * dt;
-            x[i] += v[i] * dt;
+            v[i] += a * dt_base;
+            x[i] += v[i] * dt_base;
             v_norm_sq += v[i] * v[i];
-            kinetic_now += 0.5 * m * v[i] * v[i];
         }
+        double v_norm = sqrt(v_norm_sq);
 
-        if (step % 500 == 0) {
-            double kinetic_energy = 0.5 * m * v_norm_sq;
-            double potential_energy = compute_energy(x, P1, P2, n, s0, c, m, g_vec);
-            printf("Step %d: KE=%.6e, PE=%.6e, dPE=%.3e\n",
-                   step, kinetic_energy, potential_energy,
-                   fabs(prev_energy - potential_energy));
-            prev_energy = potential_energy;
-        }
+        if (step % 5000 == 0)
+            printf("Relaxation step %d: v_norm = %.6e, c = %.6e\n", step, v_norm, c);
 
-        if (sqrt(v_norm_sq) < stop_threshold) {
+        // Convergence detection
+        if (v_norm < stop_threshold) {
             printf("Dynamic relaxation converged at step %d\n", step);
+            converged = 1;
             break;
         }
+/*
+        // If v_norm not trending down: c-stiffening
+        if (step % 500== 0){
+            if (allow_c_relaxation && step > 0 ) {
+                if (moving_average_vnorm > 2.2e1) {
+                    if (c_stiffened < 40) {
+                        c *= 100.0;
+                        printf("Convergence stagnated. Stiffening c to  %e\n", c);
+                        dt_base = fmin(dt_given, 0.05 / sqrt(c / m));
+                        k_end_correction = 2.0 * c;
+                        damping_base = 2.5 * sqrt(c / m);
+                        // Recompute s0_adapted
+                        for (int i = 0; i < n; ++i) {
+                            int masses_below = n - i;
+                            s0_adapted[i] = (L / n) + (m * g_norm * masses_below) / c;
+                        }
+                        c_stiffened += 1;  // ad 1 to 
+                    } else {
+                        printf("Stiffened %i times\n",c_stiffened);
+                    }
+                } else if ( moving_average_vnorm <= 2.2e1) {
+                    c =  c * 0.95;
+                    printf("Convergence OK Stiffening c to  %e\n", c);
+                    dt_base = fmin(dt_given, 0.05 / sqrt(c / m));
+                    k_end_correction = 2.0 * c;
+                    damping_base = 2.5 * sqrt(c / m);
+                    for (int i = 0; i < n; ++i) {
+                        int masses_below = n - i;
+                        s0_adapted[i] = (L / n) + (m * g_norm * masses_below) / c;
+                    }
+                }
+            }
+        }*/
     }
 
-    printf("=== Dynamic Relaxation End ===\n");
+    if (!converged)
+        printf("Dynamic relaxation did NOT fully converge after %d steps.\n", max_steps);
 
     free(v);
     free(F);
     free(s0_adapted);
 }
+
 
 static int solve_linear_system(double *A, double *b, int n) {
     for (int k = 0; k < n; ++k) {

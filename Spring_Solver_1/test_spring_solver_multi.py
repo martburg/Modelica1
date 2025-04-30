@@ -5,7 +5,9 @@ import matplotlib.pyplot as plt
 from numpy.ctypeslib import ndpointer
 
 # Load the DLL
-dll_path = '.\\Resources\\Library\\spring_solver.dll'  # Change path as needed
+#dll_path = '.\\Resources\\Library\\spring_solver.dll'  # Change path as needed
+dll_path = './Resources/Library/solve_spring_mass_v22.so'
+
 lib = ctypes.CDLL(dll_path)
 
 
@@ -59,12 +61,22 @@ def run_and_plot(P1, P2, n, c, total_mass, g):
     plt.show()
 
 # Example test cases
-run_and_plot(P1=[0, 0, 0], P2=[0, 10, 10], n=10, c=100, total_mass=20, g=9.81)
-run_and_plot(P1=[0, 0, 0], P2=[0, 10, 10], n=10, c=100000000, total_mass=20, g=9.81)
-#run_and_plot(P1=[0, 0, 0], P2=[0, 0.1, 10], n=10, c=10, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 1.9, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 1.8, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 1.7, 10], n=10, c=10, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 1.6, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 1.5, 10], n=11, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 1.4, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 1.3, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 1.2, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 1.1, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 1.0, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 0.9, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 0.8, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 0.7, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 0.6, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 0.5, 10], n=11, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 0.4, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 0.3, 10], n=10, c=100, total_mass=20, g=9.81)
+run_and_plot(P1=[0, 0, 0], P2=[0, 0.2, 10], n=10, c=100, total_mass=20, g=9.81)
 run_and_plot(P1=[0, 0, 0], P2=[0, 0.1, 10], n=10, c=100, total_mass=20, g=9.81)
-run_and_plot(P1=[0, 0, 0], P2=[0, 1, 10], n=10, c=100, total_mass=20, g=9.81)
-run_and_plot(P1=[0, 0, 0], P2=[0, 2, 10], n=10, c=100, total_mass=20, g=9.81)
-run_and_plot(P1=[0, 0, 0], P2=[0, 3, 10], n=10, c=100, total_mass=20, g=9.81)
-run_and_plot(P1=[0, 0, 0], P2=[0, 4, 10], n=10, c=100, total_mass=20, g=9.81)
-run_and_plot(P1=[0, 0, 0], P2=[0, 5, 10], n=10, c=100, total_mass=20, g=9.81)
