@@ -7,6 +7,20 @@
 #define TOL 1e-6
 #define LS_REDUCTION 0.5
 #define LS_MAX_TRIALS 8
+#ifdef _WIN32
+#define DLL_EXPORT __declspec(dllexport)
+#else
+#define DLL_EXPORT
+#endif
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static void compute_spring_force(const double *p1, const double *p2, double s0, double c, double *F_out) {
     double delta[3];
@@ -92,16 +106,6 @@ static void compute_residuals(
     }
 }
 
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 static double compute_energy(
     const double* x, const double* P1, const double* P2, int n,
     double s0, double c, double m, const double* g_vec)
@@ -127,6 +131,7 @@ static double compute_energy(
 
     return energy;
 }
+
 static void compute_energy_gradient(
     const double* x, const double* P1, const double* P2, int n,
     double s0, double c, double m, const double* g_vec,
@@ -165,6 +170,7 @@ static void compute_energy_gradient(
         prev = mid;
     }
 }
+
 static void dynamic_relaxation(
     double* x, const double* P1, const double* P2, int n,
     double s0, double c, double m, const double* g_vec,
@@ -315,7 +321,6 @@ static int solve_linear_system(double *A, double *b, int n) {
         int max_row = k;
         for (int i = k + 1; i < n; ++i)
             if (fabs(A[i * n + k]) > fabs(A[max_row * n + k])) max_row = i;
-
         if (fabs(A[max_row * n + k]) < 1e-12) return -1;
 
         if (max_row != k) {
@@ -342,12 +347,6 @@ static int solve_linear_system(double *A, double *b, int n) {
     }
     return 0;
 }
-
-#ifdef _WIN32
-#define DLL_EXPORT __declspec(dllexport)
-#else
-#define DLL_EXPORT
-#endif
 
 DLL_EXPORT int solve_spring_mass_c(
     double* P1, double* P2, int n,
