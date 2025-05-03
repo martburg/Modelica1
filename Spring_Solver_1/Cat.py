@@ -1,64 +1,42 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Inputs
+# Given endpoints
 P1 = np.array([0.0, 0.0, 0.0])
-P2 = np.array([0.0, 0.1, 10.0])
-n = 10
-c = 100.0
-total_mass = 20.0
-m = total_mass / n
+P2 = np.array([0.0, 0.167595, 0.985856])
+
+# Gravity vector
 g_vec = np.array([0.0, 0.0, -9.81])
-g_norm = np.linalg.norm(g_vec)
-e_g = g_vec / g_norm
+e_g = g_vec / np.linalg.norm(g_vec)
 
-# Compute rope direction
-dx_line = P2 - P1
-L = np.linalg.norm(dx_line)
-e_rope = dx_line / L
+# Number of internal nodes
+n = 10
+L = np.linalg.norm(P2 - P1)
+sag_depth = 0.05 * L  # 5% of rope length
 
-# Project gravity onto rope direction
-dot_g_rope = np.dot(e_g, e_rope)
-g_perp = e_g - dot_g_rope * e_rope
-g_perp_norm = np.linalg.norm(g_perp)
-if g_perp_norm > 1e-12:
-    g_perp /= g_perp_norm
-else:
-    g_perp[:] = 0.0
-
-# Adapted rest lengths
-s0_adapted = np.array([(L / n) + (m * g_norm * (n - i)) / c for i in range(n)])
-s0 = L / n  # uniform reference length
-T0 = c * s0
-a = (T0 / (m * g_norm)) if (T0 > 0 and g_norm > 0) else 1.0
-print(a)
-
-# Compute initial relaxed positions
-positions = []
-for i in range(n):
-    t = (i + 1) / n
+# Generate cubic parabola along gravity
+points = []
+for i in range(1, n):
+    t = i / n
     base = (1 - t) * P1 + t * P2
-    print(base)
-    s = t * L
-    sag_amount = a * (np.cosh(s / a) - 1.0)
-    print(sag_amount)
-    pos = base + sag_amount * e_g  # Apply sag in gravity direction
+    sag = -140.0 * sag_depth * t * (1.0 - t)
+    pos = base - sag * e_g
+    points.append(pos)
 
-    positions.append(pos)
+points = np.array(points)
 
-positions = np.array(positions)
+# Add endpoints for full curve
+curve = np.vstack([P1, points, P2])
 
-# Plot
-y = positions[:, 1]
-z = positions[:, 2]
-
-plt.figure(figsize=(6, 8))
-plt.plot(y, z, marker='o', linestyle='-', label="Catenary-initialized Positions (Gravity-Aligned)")
-plt.xlabel("Y")
-plt.ylabel("Z")
-plt.title("Initial Relaxed Positions (Aligned with Gravity)")
-plt.grid(True)
-plt.axis('equal')
-plt.legend()
+# Plot the curve
+fig = plt.figure(figsize=(6, 6))
+ax = fig.add_subplot(111, projection='3d')
+ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], marker='o', label='Cubic parabola (gravity sag)')
+ax.set_xlabel('X')
+ax.set_ylabel('Y')
+ax.set_zlabel('Z')
+ax.set_title('Cubic Parabola from P1 to P2 with Sag along Gravity')
+ax.legend()
+ax.view_init(elev=20, azim=120)
 plt.tight_layout()
 plt.show()

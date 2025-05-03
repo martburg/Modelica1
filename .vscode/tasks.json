@@ -2,31 +2,30 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"type": "cppbuild",
-			"label": "C/C++: clang build active file as .so",
-			"command": "/usr/bin/clang",
+			"type": "shell",
+			"label": "C/C++: cl.exe build active file to Resources\\Library",
+			"command": "cl.exe",
 			"args": [
-				"-fcolor-diagnostics",
-				"-fansi-escape-codes",
-				"-g",
-				"-fPIC",
-				"-shared",
+				"/EHsc",
+				"/nologo",
 				"${file}",
-				"-o",
-				"${workspaceFolder}/Resources/Library/${fileBasenameNoExtension}.so",
-				"-lm"
+				"/LD",
+				"/Fe:..\\Resources\\Library\\spring_solver.dll",
+				"/Fo:..\\Resources\\Library\\spring_solver.obj",
+				"/link",
+				"/IMPLIB:..\\Resources\\Library\\spring_solver.lib"
 			],
 			"options": {
 				"cwd": "${fileDirname}"
 			},
 			"problemMatcher": [
-				"$gcc"
+				"$msCompile"
 			],
 			"group": {
 				"kind": "build",
 				"isDefault": true
 			},
-			"detail": "compiler: /usr/bin/clang"
+			"detail": "Builds active file to DLL+LIB in Resources\\Library"
 		}
 	]
 }

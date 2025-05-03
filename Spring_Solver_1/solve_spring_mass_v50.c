@@ -7,6 +7,234 @@
 #define TOL 1e-6
 #define LS_REDUCTION 0.5
 #define LS_MAX_TRIALS 8
+#ifdef _WIN32
+#define DLL_EXPORT __declspec(dllexport)
+#else
+#define DLL_EXPORT
+#endif
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+double norm3(const double v[3]) {
+    return sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+}
+
+void lin_comb3(double out[3], const double a, const double v1[3], const double b, const double v2[3]) {
+    for (int i = 0; i < 3; ++i)
+        out[i] = a * v1[i] + b * v2[i];
+}
+
+double arc_length_sagged(
+    const double P1[3], const double P2[3], const double e_g[3],
+    double a, int n)
+{
+    double length = 0.0;
+    for (int i = 0; i < n; ++i) {
+        double t0 = (double)i / n;
+        double t1 = (double)(i + 1) / n;
+
+        double base0[3], base1[3], sagged0[3], sagged1[3];
+
+        // base points
+        lin_comb3(base0, 1.0 - t0, P1, t0, P2);
+        lin_comb3(base1, 1.0 - t1, P1, t1, P2);
+
+        // sag values
+        double sag0 = -4.0 * a * t0 * (1.0 - t0);
+        double sag1 = -4.0 * a * t1 * (1.0 - t1);
+
+        // sagged positions
+        for (int j = 0; j < 3; ++j) {
+            sagged0[j] = base0[j] + sag0 * e_g[j];
+            sagged1[j] = base1[j] + sag1 * e_g[j];
+        }
+
+        // segment length
+        double seg[3] = {
+            sagged1[0] - sagged0[0],
+            sagged1[1] - sagged0[1],
+            sagged1[2] - sagged0[2]
+        };
+        length += norm3(seg);
+    }
+    return length;
+}
+
+void vec_add3(double out[3], const double v1[3], const double v2[3]) {
+    for (int i = 0; i < 3; ++i)
+        out[i] = v1[i] + v2[i];
+}
+
+double find_sag_depth(
+    const double P1[3], const double P2[3], const double g_vec[3],
+    double s0_stretched, int n, double tol)
+{
+    // Normalize gravity
+    double g_norm = norm3(g_vec);
+    double e_g[3] = { g_vec[0]/g_norm, g_vec[1]/g_norm, g_vec[2]/g_norm };
+
+    // Straight-line length
+    double dx[3] = { P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2] };
+    double L = norm3(dx);
+
+    // Bisection bounds
+    double a_low = 0.0;
+    double a_high = 0.5 * L;
+    double a_mid;
+
+    for (int iter = 0; iter < 100; ++iter) {
+        a_mid = 0.5 * (a_low + a_high);
+        double len = arc_length_sagged(P1, P2, e_g, a_mid, n);
+
+        if (fabs(len - s0_stretched) < tol)
+            break;
+        if (len < s0_stretched)
+            a_low = a_mid;
+        else
+            a_high = a_mid;
+    }
+
+    return a_mid;
+}
+
+double init_dynamic_relaxation( double* x,
+     const double* P1, const double* P2,
+     int n, double c, double m, const double* g_vec, double scale_pos, double* s0_relaxed)
+{
+    int dof = (n-1) * 3;
+    double* v = calloc(dof, sizeof(double));
+    double* F = calloc(dof, sizeof(double));
+    
+    double dx_line[3] = {P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]};
+    double L = sqrt(dx_line[0]*dx_line[0] + dx_line[1]*dx_line[1] + dx_line[2]*dx_line[2]);
+    double e_rope[3] = {dx_line[0]/L, dx_line[1]/L, dx_line[2]/L};
+
+    double g_norm = sqrt(g_vec[0]*g_vec[0] + g_vec[1]*g_vec[1] + g_vec[2]*g_vec[2]);
+    double e_g[3] = {g_vec[0]/g_norm, g_vec[1]/g_norm, g_vec[2]/g_norm};
+
+    double dot_g_rope = e_g[0]*e_rope[0] + e_g[1]*e_rope[1] + e_g[2]*e_rope[2];
+    double g_perp[3] = {
+        e_g[0] - dot_g_rope * e_rope[0],
+        e_g[1] - dot_g_rope * e_rope[1],
+        e_g[2] - dot_g_rope * e_rope[2]
+    };
+    // Project gravity onto plane perpendicular to rope
+    double g_perp_norm = sqrt(g_perp[0]*g_perp[0] + g_perp[1]*g_perp[1] + g_perp[2]*g_perp[2]);
+    if (g_perp_norm > 1e-12) {
+        g_perp[0] /= g_perp_norm;
+        g_perp[1] /= g_perp_norm;
+        g_perp[2] /= g_perp_norm;
+    } else {
+        g_perp[0] = g_perp[1] = g_perp[2] = 0.0;
+    }
+
+    double s0_stretched = 0;
+    for (int i = 0; i < n; ++i) {
+        int masses_below = n - i;
+        s0_relaxed[i] = (L / n) + (m * g_norm * masses_below) / c;
+        s0_stretched += s0_relaxed[i];
+    }
+
+    // Compute cosine of angle between e_rope and e_g
+    double dot = e_rope[0]*e_g[0] + e_rope[1]*e_g[1] + e_rope[2]*e_g[2];
+    dot = fmax(-1.0, fmin(1.0, dot));  // Clamp to valid acos domain
+
+    double angle_rad = acos(dot);
+    double angle_deg = angle_rad * 180.0 / 3.1415;
+
+    double a_fit = find_sag_depth(P1, P2, g_vec, s0_stretched, n, 1e-6);
+    //printf("a_fit = %.2f : \n", a_fit);
+    double sag_factor = 10;
+
+    if (angle_deg < 10.0 || angle_deg > 170.0) {
+        //printf("Near-vertical case (%.2f): initializing cubic parabola along gravity\n", angle_deg);
+    
+        for (int i = 0; i < n - 1; ++i) {
+            double t = (double)(i + 1) / (double)n;
+    
+            // Straight-line base interpolation
+            double base[3] = {
+                (1 - t) * P1[0] + t * P2[0],
+                (1 - t) * P1[1] + t * P2[1],
+                (1 - t) * P1[2] + t * P2[2]
+            };
+    
+            // Parabolic sag in gravity direction (s(t) = -4a t(1 - t))
+            double sag = a_fit * sag_factor * t * (1.0 - t);
+    
+            for (int j = 0; j < 3; ++j)
+                x[i*3 + j] = base[j] + sag * e_g[j];
+        }
+
+        // Compute segment lengths and store in s0_adapted
+        double s0_sum = 0;
+        for (int i = 0; i < n; ++i) {
+            double xi[3], xi1[3];
+
+            if (i == 0) {
+                // First segment: P1 to x[0]
+                for (int j = 0; j < 3; ++j) {
+                    xi[j]  = P1[j];
+                    xi1[j] = x[j];
+                }
+            } else if (i == n - 1) {
+                // Last segment: x[n-2] to P2
+                for (int j = 0; j < 3; ++j) {
+                    xi[j]  = x[(n - 2) * 3 + j];
+                    xi1[j] = P2[j];
+                }
+            } else {
+                // Middle segments: x[i-1] to x[i]
+                for (int j = 0; j < 3; ++j) {
+                    xi[j]  = x[(i - 1) * 3 + j];
+                    xi1[j] = x[i * 3 + j];
+                }
+            }
+
+            double dx[3] = {
+                xi1[0] - xi[0],
+                xi1[1] - xi[1],
+                xi1[2] - xi[2]
+            };
+            s0_relaxed[i] = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]);
+            s0_sum += s0_relaxed[i];
+        }
+/*        double s0_sum1 = 0;
+        for (int i = 0; i < n; ++i) {
+            s0_relaxed[i] /= s0_sum;
+            s0_sum1 += s0_relaxed[i];
+        }*/
+    }
+ else {
+        for (int i = 0; i < n; ++i) {
+            int masses_below = n - i;
+            s0_relaxed[i] = (L / n) ;
+        }
+        double a = 0.2;
+
+        for (int i = 0; i < n-1; ++i) {
+            double t = (double)(i+1) / (double)n;
+            for (int j = 0; j < 3; ++j)
+                x[i*3+j] = (1.0 - t) * P1[j] + t * P2[j];
+
+            double s = t * L;
+            double sag_amount = a * (cosh(s/a) - 1.0);
+            //printf("sag_amount (%.6f)\n", sag_amount);
+            for (int j = 0; j < 3; ++j)
+                x[i*3+j] += sag_amount /100 * g_perp[j];
+        }
+    }
+    free(v);
+    free(F);
+    return 1;
+}
 
 static void compute_spring_force(const double *p1, const double *p2, double s0, double c, double *F_out) {
     double delta[3];
@@ -16,7 +244,9 @@ static void compute_spring_force(const double *p1, const double *p2, double s0, 
         length_sq += delta[i] * delta[i];
     }
     double length = sqrt(length_sq);
+
     if (length < 1e-12) length = 1e-12; // prevent division by zero
+
     double coeff = -(length - s0) * c / length;
     for (int i = 0; i < 3; ++i)
         F_out[i] = coeff * delta[i];
@@ -92,16 +322,6 @@ static void compute_residuals(
     }
 }
 
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 static double compute_energy(
     const double* x, const double* P1, const double* P2, int n,
     double s0, double c, double m, const double* g_vec)
@@ -127,6 +347,7 @@ static double compute_energy(
 
     return energy;
 }
+
 static void compute_energy_gradient(
     const double* x, const double* P1, const double* P2, int n,
     double s0, double c, double m, const double* g_vec,
@@ -165,192 +386,64 @@ static void compute_energy_gradient(
         prev = mid;
     }
 }
+
 static void dynamic_relaxation(
     double* x, const double* P1, const double* P2, int n,
-    double s0, double c_in, double m, const double* g_vec,
-    double dt_given, int max_steps)
+    double* s0_relaxed, double c, double m, const double* g_vec,
+    double dt_given, int max_steps, double scale_pos)
 {
     int dof = (n-1) * 3;
     double* v = calloc(dof, sizeof(double));
     double* F = calloc(dof, sizeof(double));
-    double* s0_adapted = calloc(n, sizeof(double));
-
-    // --- Rope and gravity properties ---
-    double dx_line[3] = {P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]};
-    double L = sqrt(dx_line[0]*dx_line[0] + dx_line[1]*dx_line[1] + dx_line[2]*dx_line[2]);
-    double e_rope[3] = {dx_line[0]/L, dx_line[1]/L, dx_line[2]/L};
-
-    double g_norm = sqrt(g_vec[0]*g_vec[0] + g_vec[1]*g_vec[1] + g_vec[2]*g_vec[2]);
-    double e_g[3] = {g_vec[0]/g_norm, g_vec[1]/g_norm, g_vec[2]/g_norm};
-
-    double dot_rope_gravity = fabs(e_rope[0]*e_g[0] + e_rope[1]*e_g[1] + e_rope[2]*e_g[2]);
-
-    int allow_c_relaxation = (dot_rope_gravity > 0.95);  // near-parallel rope-gravity
-
-    double c = c_in;  // start with user-given c
-    int c_stiffened = 0;  // flag if c is being gradually reduced
-    int c_relaxed = 0;  // flag if c is being gradually reduced
-    double c_start = c;
-
-    // --- Gravity component perpendicular to rope ---
-    double dot_g_rope = e_g[0]*e_rope[0] + e_g[1]*e_rope[1] + e_g[2]*e_rope[2];
-    double g_perp[3] = {
-        e_g[0] - dot_g_rope * e_rope[0],
-        e_g[1] - dot_g_rope * e_rope[1],
-        e_g[2] - dot_g_rope * e_rope[2]
-    };
-    double g_perp_norm = sqrt(g_perp[0]*g_perp[0] + g_perp[1]*g_perp[1] + g_perp[2]*g_perp[2]);
-    if (g_perp_norm > 1e-12) {
-        g_perp[0] /= g_perp_norm;
-        g_perp[1] /= g_perp_norm;
-        g_perp[2] /= g_perp_norm;
-    } else {
-        g_perp[0] = g_perp[1] = g_perp[2] = 0.0;
-    }
-
-    // --- Precompute adapted s0 ---
-    for (int i = 0; i < n; ++i) {
-        int masses_below = n - i;
-        s0_adapted[i] = (L / n) + (m * g_norm * masses_below) / c;
-    }
-
-    // --- Initialize straight + sag ---
-    double T0 = c * s0;
-    double a = (T0 > 0 && g_norm > 0) ? (T0 / (m * g_norm)) : 1.0;
-
-    for (int i = 0; i < n-1; ++i) {
-        double t = (double)(i+1) / (double)n;
-        for (int j = 0; j < 3; ++j)
-            x[i*3+j] = (1.0 - t)*P1[j] + t*P2[j];
-
-        double s = t * L;
-        double sag_amount = a * (cosh(s/a) - 1.0);
-        for (int j = 0; j < 3; ++j)
-            x[i*3+j] += sag_amount * g_perp[j];
-    }
-
-    // --- Print initial relaxed positions ---
-    printf("\nInitial relaxed positions before relaxation:\n");
-    for (int i = 0; i < n-1; ++i)
-        printf("Node %d: [%.6f, %.6f, %.6f]\n", i+1, x[i*3+0], x[i*3+1], x[i*3+2]);
-
-    // --- Relaxation parameters ---
+    
+    double omega = sqrt(c / m);
+    double dt = fmin(dt_given, 0.05 / omega);
     double stop_threshold = 1e-4;
-    double dt_base = fmin(dt_given, 0.05 / sqrt(c / m));
-    double damping_base = 2.5 * sqrt(c / m);
-    double k_end_correction = 2.0 * c;
 
-    // For monitoring
-    double last_vnorm = 1e10;
-    double moving_average_vnorm = 1e10;
-    const double alpha = 0.05;  // moving average update factor
+    double damping = 3* sqrt(c / m);
 
-    int converged = 0;
-    int step = 0;
-    int max_c_stiffen_steps = 5000;
-
-    // --- Main relaxation loop ---
-    for (step = 0; step < max_steps; ++step) {
+    for (int step = 0; step < max_steps; ++step) {
         memset(F, 0, dof * sizeof(double));
 
         for (int i = 0; i < n-1; ++i) {
-            const double* mid = &x[i*3];
             const double* prev = (i == 0) ? P1 : &x[(i-1)*3];
+            const double* mid = &x[i*3];
             const double* next = (i == n-2) ? P2 : &x[(i+1)*3];
-            double F_l[3], F_r[3];
 
-            compute_spring_force(prev, mid, s0_adapted[i], c, F_l);
-            compute_spring_force(next, mid, s0_adapted[i+1], c, F_r);
+            double F_l[3];
+            compute_spring_force(prev, mid, s0_relaxed[i], c, F_l);
+            for (int j = 0; j < 3; ++j)
+                F[i * 3 + j] += F_l[j];
+
+            if (i < n-1){
+                double F_r[3]; 
+                compute_spring_force(next, mid, s0_relaxed[i+1], c, F_r);
+                for (int j = 0; j < 3; ++j)
+                    F[i * 3 + j] += F_r[j];
+            }            
 
             for (int j = 0; j < 3; ++j)
-                F[i*3+j] = F_l[j] + F_r[j] + m * g_vec[j] - 2.5 * sqrt(c / m) * v[i*3+j];
-
-            // Soft end constraint
-            double p_minus_p1[3] = {
-                mid[0] - P1[0],
-                mid[1] - P1[1],
-                mid[2] - P1[2]
-            };
-            double t_proj = (p_minus_p1[0]*e_rope[0] + p_minus_p1[1]*e_rope[1] + p_minus_p1[2]*e_rope[2]) / L;
-
-            if (t_proj < 0.0) {
-                for (int j = 0; j < 3; ++j)
-                    F[i*3+j] += -k_end_correction * (mid[j] - P1[j]);
-            } else if (t_proj > 1.0) {
-                for (int j = 0; j < 3; ++j)
-                    F[i*3+j] += -k_end_correction * (mid[j] - P2[j]);
-            }
+                F[i*3+j] +=  m * g_vec[j] - damping * v[i*3+j];
         }
-
-        // --- Update positions and velocities ---
         double v_norm_sq = 0.0;
         for (int i = 0; i < dof; ++i) {
             double a = F[i] / m;
-            v[i] += a * dt_base;
-            x[i] += v[i] * dt_base;
+            v[i] += a * dt;
+            x[i] += v[i] * dt;
             v_norm_sq += v[i] * v[i];
         }
-        double v_norm = sqrt(v_norm_sq);
-
         if (step % 5000 == 0)
-            printf("Relaxation step %d: v_norm = %.6e, c = %.6e\n", step, v_norm, c);
-
-        // Convergence detection
-        if (v_norm < stop_threshold) {
-            printf("Dynamic relaxation converged at step %d\n", step);
-            converged = 1;
-            break;
-        }
-/*
-        // If v_norm not trending down: c-stiffening
-        if (step % 500== 0){
-            if (allow_c_relaxation && step > 0 ) {
-                if (moving_average_vnorm > 2.2e1) {
-                    if (c_stiffened < 40) {
-                        c *= 100.0;
-                        printf("Convergence stagnated. Stiffening c to  %e\n", c);
-                        dt_base = fmin(dt_given, 0.05 / sqrt(c / m));
-                        k_end_correction = 2.0 * c;
-                        damping_base = 2.5 * sqrt(c / m);
-                        // Recompute s0_adapted
-                        for (int i = 0; i < n; ++i) {
-                            int masses_below = n - i;
-                            s0_adapted[i] = (L / n) + (m * g_norm * masses_below) / c;
-                        }
-                        c_stiffened += 1;  // ad 1 to 
-                    } else {
-                        printf("Stiffened %i times\n",c_stiffened);
-                    }
-                } else if ( moving_average_vnorm <= 2.2e1) {
-                    c =  c * 0.95;
-                    printf("Convergence OK Stiffening c to  %e\n", c);
-                    dt_base = fmin(dt_given, 0.05 / sqrt(c / m));
-                    k_end_correction = 2.0 * c;
-                    damping_base = 2.5 * sqrt(c / m);
-                    for (int i = 0; i < n; ++i) {
-                        int masses_below = n - i;
-                        s0_adapted[i] = (L / n) + (m * g_norm * masses_below) / c;
-                    }
-                }
-            }
-        }*/
+            printf("Relaxation step %d: v_norm = %.6e\n", step, sqrt(v_norm_sq));
     }
-
-    if (!converged)
-        printf("Dynamic relaxation did NOT fully converge after %d steps.\n", max_steps);
-
     free(v);
     free(F);
-    free(s0_adapted);
 }
-
 
 static int solve_linear_system(double *A, double *b, int n) {
     for (int k = 0; k < n; ++k) {
         int max_row = k;
         for (int i = k + 1; i < n; ++i)
             if (fabs(A[i * n + k]) > fabs(A[max_row * n + k])) max_row = i;
-
         if (fabs(A[max_row * n + k]) < 1e-12) return -1;
 
         if (max_row != k) {
@@ -378,12 +471,6 @@ static int solve_linear_system(double *A, double *b, int n) {
     return 0;
 }
 
-#ifdef _WIN32
-#define DLL_EXPORT __declspec(dllexport)
-#else
-#define DLL_EXPORT
-#endif
-
 DLL_EXPORT int solve_spring_mass_c(
     double* P1, double* P2, int n,
     double c, double total_mass, double* g_vec,
@@ -397,9 +484,10 @@ DLL_EXPORT int solve_spring_mass_c(
     double *x = malloc(dof * sizeof(double));
     double *res = malloc(dof * sizeof(double));
     double *J = malloc(dof * dof * sizeof(double));
-    double *dx = malloc(dof * sizeof(double));
+    double* s0_relaxed = malloc((n) * sizeof(double));
+    //double* s0_relaxed = malloc((n) * sizeof(double));
     double m = total_mass / (n - 1);
-    if (!x || !res || !J || !dx) return -1;
+    if (!x || !res || !J ) return -1;
 
     double dx_line[3] = {P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]};
     double L = sqrt(dx_line[0]*dx_line[0] + dx_line[1]*dx_line[1] + dx_line[2]*dx_line[2]);
@@ -416,19 +504,42 @@ DLL_EXPORT int solve_spring_mass_c(
     double c_scaled = c / scale_force;
     double m_scaled = m / scale_force;
 
-    // Simple straight line init
-    for (int i = 0; i < n-1; ++i) {
-        double t = (double)(i+1) / (double)n;
-        for (int j = 0; j < 3; ++j)
-            x[i*3+j] = (1.0 - t) * P1_scaled[j] + t * P2_scaled[j];
+    init_dynamic_relaxation( x, P1_scaled, P2_scaled, n, c_scaled, m_scaled, g_vec_scaled, scale_pos, s0_relaxed); 
+
+    printf("\ns0_relaxed BEFORE dynamic relaxation:\n");
+    for (int i = 0; i < n ; ++i) {
+        printf("Spring %d: %f]\n", i + 1,s0_relaxed[i]);
     }
 
-    dynamic_relaxation(x, P1_scaled, P2_scaled, n, s0_scaled, c_scaled, m_scaled, g_vec_scaled, 0.001, 100000);
-
-    printf("\nInitial relaxed positions after dynamic relaxation:\n");
+    printf("\nInitial relaxed positions BEFORE dynamic relaxation:\n");
     for (int i = 0; i < n - 1; ++i) {
         printf("Node %d: [%f, %f, %f]\n", i + 1, x[i*3+0] * scale_pos, x[i*3+1] * scale_pos, x[i*3+2] * scale_pos);
     }
+
+    dynamic_relaxation(x, P1_scaled, P2_scaled, n, s0_relaxed, c_scaled, m_scaled, g_vec_scaled, 0.001, 100000, scale_pos);
+
+    printf("\ns0_relaxed AFTER dynamic relaxation:\n");
+    for (int i = 0; i < n ; ++i) {
+        printf("Spring %d: %f]\n", i + 1,s0_relaxed[i]);
+    }
+
+    printf("\nInitial relaxed positions AFTER dynamic relaxation:\n");
+    for (int i = 0; i < n - 1; ++i) {
+        printf("Node %d: [%f, %f, %f]\n", i + 1, x[i*3+0] * scale_pos, x[i*3+1] * scale_pos, x[i*3+2] * scale_pos);
+    }
+/*
+    for (int i = 0; i < n - 1; ++i) {
+        double* p1 = (i == 0)     ? P1_scaled           : &x[(i - 1) * 3];
+        double* p2 = (i == n - 1) ? (double*)P2_scaled  : &x[i * 3];
+    
+        double dx[3] = {
+            p2[0] - p1[0],
+            p2[1] - p1[1],
+            p2[2] - p1[2]
+        };
+        s0_adapted_scaled[i] = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]);
+    }    
+
 
     for (int iter = 0; iter < MAX_ITER; ++iter) {
         compute_residuals(x, P1_scaled, P2_scaled, n, s0_scaled, c_scaled, m_scaled, g_vec_scaled, scale_pos, res);
@@ -438,7 +549,7 @@ DLL_EXPORT int solve_spring_mass_c(
 
         if (res_norm < TOL) break;
 
-        printf("Iteration %d: residual norm = %.6e, max residual component = %.6e\n", iter, res_norm, TOL);
+        //printf("Iteration %d: residual norm = %.6e, max residual component = %.6e\n", iter, res_norm, TOL);
 
         if (res_norm < TOL) {
             printf("Converged at iteration %d!\n", iter);
@@ -489,7 +600,7 @@ DLL_EXPORT int solve_spring_mass_c(
             }
         }
     }
-
+*/
     for (int i = 0; i < dof; ++i)
         x[i] *= scale_pos;
 
@@ -502,6 +613,6 @@ DLL_EXPORT int solve_spring_mass_c(
     }
 
 
-    free(x); free(res); free(J); free(dx);
+    free(x); free(res); free(J);free(s0_relaxed);
     return 0;
 }
