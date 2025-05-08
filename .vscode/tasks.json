@@ -16,16 +16,34 @@
 				"/IMPLIB:..\\Resources\\Library\\spring_solver.lib"
 			],
 			"options": {
-				"cwd": "${fileDirname}"
+				"cwd": "${fileDirname}",
+				"shell": {
+					"executable": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+				}
 			},
 			"problemMatcher": [
 				"$msCompile"
 			],
+			"group": "build",
+			"detail": "gcc and link to LAPAK output to DLL in Resources\\Library"
+		},
+		{
+			"label": "Build Static DLL with GCC + LAPACK",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"C:\\msys64\\usr\\bin\\bash.exe ./build_with_gcc.sh -v -O2 -Wall -shared \"${file}\" -o \"../Resources/Library/spring_solver_lapak.dll\" /mingw64/lib/liblapack.a /mingw64/lib/libblas.a -lm"
+			],
+			"options": {
+				"cwd": "${fileDirname}"
+			},
 			"group": {
 				"kind": "build",
 				"isDefault": true
 			},
-			"detail": "Builds active file to DLL+LIB in Resources\\Library"
+			"problemMatcher": [],
+			"detail": "Links statically against LAPACK/BLAS"
 		}
 	]
 }
