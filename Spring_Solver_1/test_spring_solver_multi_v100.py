@@ -94,7 +94,7 @@ def run_and_plot(P1, P2, n, total_mass, length_factor, rope_diameter, youngs_mod
     ax1.set_zlabel("Z")
     ax1.legend()
     ax1.view_init(elev=20, azim=-60)
-    #set_axes_equal(ax1)  # <-- Enforce equal scaling for all axes
+    set_axes_equal(ax1)  # <-- Enforce equal scaling for all axes
 
     ax2 = fig.add_subplot(122)
     ax2.plot(spring_lengths, marker='o')
@@ -105,15 +105,17 @@ def run_and_plot(P1, P2, n, total_mass, length_factor, rope_diameter, youngs_mod
     plt.show()
 
 # Example test cases
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=1, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=5000, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=10, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=15, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=20, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=25, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=30, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=35, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+run_and_plot(P1=[0, 0, 0], P2=[0, 1, 10], n=20, total_mass=1, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+run_and_plot(P1=[20, 0, 0], P2=[50, 70, 10], n=20, total_mass=20, rope_diameter= 0.01, length_factor= 1.4, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+run_and_plot(P1=[0, 0, 0], P2=[0, 100, 2], n=20, total_mass=25, rope_diameter= 0.01, length_factor= 1.3, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+run_and_plot(P1=[0, 0, 0], P2=[0, 100, 3], n=20, total_mass=30, rope_diameter= 0.01, length_factor= 1.2, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=35, rope_diameter= 0.01, length_factor= 1.1, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=400, rope_diameter= 0.01, length_factor= 1.005, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=500, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=1000, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
 run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=40, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
 #run_and_plot(P1=[0, 0, 0], P2=[0, 0.51, 10], n=20, total_mass=0.9, rope_diameter= 0.01, length_factor= 1.001, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
 #run_and_plot(P1=[0, 0, 0], P2=[0, 0.51, 10], n=20, total_mass=0.9, rope_diameter= 0.01, length_factor= 1.0001, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
 #run_and_plot(P1=[0, 0, 0], P2=[0, 0.51, 10], n=20, total_mass=0.9, rope_diameter= 0.01, length_factor= 1.00001, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+ #   printf("P1_g_vec =[%f,%f,%f]",P1_g_vec[0],P1_g_vec[1],P1_g_vec[2] );
+ #   printf("P2_g_vec =[%f,%f,%f]",P2_g_vec[0],P2_g_vec[1],P2_g_vec[2] );

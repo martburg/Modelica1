@@ -4,7 +4,6 @@
 #include <stdio.h>
 
 #define LEGACY_MAX_ITER 100
-
 #define TOL 1e-6
 #define LS_REDUCTION 0.5
 #define LS_MAX_TRIALS 8
@@ -23,6 +22,9 @@
 #include <stdlib.h>
 #include <string.h>
 #define IS_INVALID(x) (!(isfinite(x)))
+#define ARC_STEPS_FINE 1000
+#define NEWTON_TOL     1e-10
+#define NEWTON_MAX     20
 extern void dgesv_(int* N, int* NRHS, double* A, int* LDA,
     int* IPIV, double* B, int* LDB, int* INFO);
 
@@ -182,17 +184,16 @@ int energy_minimize(
     int dof = 3 * (n - 1);
     memcpy(x_out, x, sizeof(double) * dof);
 
-    double *grad      = malloc(sizeof(double) * dof);
-    double *grad_prev = malloc(sizeof(double) * dof);
-    double *s         = malloc(sizeof(double) * dof);
-    double *y         = malloc(sizeof(double) * dof);
+    double *grad      = malloc(dof * sizeof(double));
+    double *grad_prev = malloc(dof * sizeof(double));
+    double *s         = malloc(dof * sizeof(double));
+    double *y         = malloc(dof * sizeof(double));
     double *H         = calloc(dof * dof, sizeof(double));
-    double *p         = malloc(sizeof(double) * dof);
-    double *x_prev    = malloc(sizeof(double) * dof);
-    double *x_temp    = malloc(sizeof(double) * dof);
-    double *grad_temp = malloc(sizeof(double) * dof);
-    double *Hy        = malloc(sizeof(double) * dof);
-    if (!grad || !grad_prev || !s || !y || !H || !p || !x_prev || !x_temp || !grad_temp || !Hy)
+    double *p         = malloc(dof * sizeof(double));
+    double *x_prev    = malloc(dof * sizeof(double));
+    double *Hy        = malloc(dof * sizeof(double));
+    double *grad_trial = malloc(sizeof(double) * dof);
+    if (!grad || !grad_prev || !s || !y || !H || !p || !x_prev || !Hy)
         return -1;
 
     for (int i = 0; i < dof; ++i)
@@ -202,62 +203,109 @@ int energy_minimize(
     double prev_energy = compute_total_energy(x_out, P1, P2, n, s0, k, m, g_vec);
 
     for (int iter = 0; iter < max_iter; ++iter) {
-        // p = -H * grad
+        double grad_norm = 0.0;
+        for (int i = 0; i < dof; ++i) {
+            if (!isfinite(grad[i])) {
+                printf("NaN in gradient at iter %d, index %d\n", iter, i);
+                goto cleanup;
+            }
+            grad_norm += grad[i] * grad[i];
+        }
+        grad_norm = sqrt(grad_norm);
+    
+        if (grad_norm < tol) {
+            printf("\nBFGS CONVERGED 3D in %d steps with grad norm %.3e\n", iter, grad_norm);
+            goto cleanup;
+        }
+    
+        // Compute p = -H * grad
         for (int i = 0; i < dof; ++i) {
             p[i] = 0.0;
             for (int j = 0; j < dof; ++j)
                 p[i] -= H[i * dof + j] * grad[j];
         }
-
+    
+        // Save previous state
         memcpy(x_prev, x_out, sizeof(double) * dof);
         memcpy(grad_prev, grad, sizeof(double) * dof);
-
-        memcpy(x_out, x_temp, sizeof(double) * dof);
-        memcpy(grad, grad_temp, sizeof(double) * dof);
-
-        double grad_norm = 0.0;
-        for (int i = 0; i < dof; ++i)
-            grad_norm += grad[i] * grad[i];
-        grad_norm = sqrt(grad_norm);
-
-        double energy = compute_total_energy(x_out, P1, P2, n, s0, k, m, g_vec);
-        //printf("Iter %d: energy = %.6e, grad_norm = %.3e, alpha = %.3e\n", iter, energy, grad_norm, alpha);
-
-        if (grad_norm < tol || fabs(energy - prev_energy) < tol * 1e-2) {
-            printf("\nBFGS CONVERGED 3D in %d steps with grad normt %.3e\n", iter,grad_norm);
+    
+        // Compute x_trial = x_out + step_size * p
+        double *x_trial = malloc(sizeof(double) * dof);
+        for (int i = 0; i < dof; ++i) {
+            x_trial[i] = x_out[i] + step_size * p[i];
+            if (!isfinite(x_trial[i])) {
+                printf("NaN in x_trial at iter %d, index %d\n", iter, i);
+                free(x_trial);
+                goto cleanup;
+            }
+        }
+    
+        // Compute trial gradient and energy
+        compute_energy_gradient(x_trial, P1, P2, n, s0, k, m, g_vec, grad_trial);
+        double energy = compute_total_energy(x_trial, P1, P2, n, s0, k, m, g_vec);
+        
+        if (!isfinite(energy)) {
+            printf("NaN in energy at iter %d\n", iter);
+            free(x_trial);
             goto cleanup;
         }
-
+        for (int i = 0; i < dof; ++i) {
+            if (!isfinite(grad_trial[i])) {
+                printf("NaN in trial gradient at iter %d, index %d\n", iter, i);
+                free(x_trial);
+                goto cleanup;
+            }
+        }
+    
+        if (fabs(energy - prev_energy) < tol * 1e-2 || energy < prev_energy) {
+            prev_energy = energy;
+            memcpy(x_out, x_trial, sizeof(double) * dof);
+            memcpy(grad, grad_trial, sizeof(double) * dof);
+            free(x_trial);
+        } else {
+            //printf("Rejected step at iter %d: energy increased\n", iter);
+            free(x_trial);
+            goto cleanup;
+        }
+    
         prev_energy = energy;
-
+        memcpy(x_out, x_trial, sizeof(double) * dof);
+        free(x_trial);
+    
+        // Update s, y
         for (int i = 0; i < dof; ++i) {
             s[i] = x_out[i] - x_prev[i];
             y[i] = grad[i] - grad_prev[i];
         }
-
+    
         double sTy = 0.0;
-        for (int i = 0; i < dof; ++i)
+        for (int i = 0; i < dof; ++i) {
+            if (!isfinite(s[i]) || !isfinite(y[i])) {
+                printf("NaN in s or y at iter %d, index %d\n", iter, i);
+                goto cleanup;
+            }
             sTy += s[i] * y[i];
-
-        if (fabs(sTy) < 1e-10) {
-            //printf("Small s^T y detected — fallback steepest descent\n");
+        }
+    
+        if (fabs(sTy) < 1e-12) {
             for (int i = 0; i < dof; ++i)
-                x_out[i] -= step_size * grad[i];
+                x_out[i] -= step_size * grad[i];  // fallback
             compute_energy_gradient(x_out, P1, P2, n, s0, k, m, g_vec, grad);
             continue;
         }
-
+    
         double rho = 1.0 / sTy;
-
+    
+        // Hy = H * y
         for (int i = 0; i < dof; ++i) {
             Hy[i] = 0.0;
             for (int j = 0; j < dof; ++j)
                 Hy[i] += H[i * dof + j] * y[j];
         }
-
+    
         for (int i = 0; i < dof; ++i)
             for (int j = 0; j < dof; ++j) {
-                double ssT   = s[i] * s[j];
+                double ssT = s[i] * s[j];
                 double Hy_sT = Hy[i] * s[j];
                 double s_HyT = s[i] * Hy[j];
                 H[i * dof + j] += rho * (ssT - Hy_sT - s_HyT);
@@ -268,42 +316,15 @@ int energy_minimize(
 
 cleanup:
     free(grad); free(grad_prev); free(s); free(y); free(H);
-    free(p); free(x_prev); free(x_temp); free(grad_temp); free(Hy);
+    free(p); free(x_prev); free(Hy);
     return 0;
 }
 
-// Cubic parabola arc length calculator
-static double arc_length_cubic_parabola(const double P1[3], const double P2[3], const double dir[3], double a, int n) {
-    double length = 0.0;
-    for (int i = 0; i < n; ++i) {
-        double t0 = (double)i / n;
-        double t1 = (double)(i + 1) / n;
 
-        double base0[3], base1[3], sagged0[3], sagged1[3];
-        for (int j = 0; j < 3; ++j) {
-            base0[j] = (1 - t0) * P1[j] + t0 * P2[j];
-            base1[j] = (1 - t1) * P1[j] + t1 * P2[j];
-        }
-        double s0 = -4 * a * t0 * (1 - t0);
-        double s1 = -4 * a * t1 * (1 - t1);
-        for (int j = 0; j < 3; ++j) {
-            sagged0[j] = base0[j] + s0 * dir[j];
-            sagged1[j] = base1[j] + s1 * dir[j];
-        }
-        double d[3] = {
-            sagged1[0] - sagged0[0],
-            sagged1[1] - sagged0[1],
-            sagged1[2] - sagged0[2]
-        };
-        length += sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
-    }
-    return length;
-}
-
-double estimate_sag_depth(double total_mass, const double g[3], double L, double EA) {
-    double weight = total_mass * norm3(g);
-    double T0 = EA / L;  // Rough tension scale
-    return weight * L / (8 * T0);  // Parabolic sag estimate
+static void cubic_parabola_point(double* out, const double* P1, const double* P2, const double* dir, double a, double t) {
+    double sag = -4.0 * a * t * (1.0 - t);
+    for (int j = 0; j < 3; ++j)
+        out[j] = (1 - t) * P1[j] + t * P2[j] + sag * dir[j];
 }
 
 static void add_spring_jacobian(double *J, int i, int j, int dof, const double *xi, const double *xj, double rest_len, double k, int sign) {
@@ -335,220 +356,6 @@ static void add_spring_jacobian(double *J, int i, int j, int dof, const double *
             J[(row + r) * dof + (col + c)] += sign * block[r * 3 + c];
         }
     }
-}
-
-void compute_rope_plane_basis(
-    const double P1[3], const double P2[3],
-    const double g[3],
-    double R_3x2[6]  // Output: 3x2 matrix in row-major order [e1 | e2]
-) {
-    // e1 = unit vector from P1 to P2
-    double d[3] = { P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2] };
-    double L = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
-    if (L < 1e-12) {
-        //printf("compute_rope_plane_basis: P1 and P2 are too close!\n");
-        return;
-    }
-    double e1[3] = { d[0]/L, d[1]/L, d[2]/L };
-
-    // Project gravity onto plane orthogonal to e1
-    double g_dot_e1 = g[0]*e1[0] + g[1]*e1[1] + g[2]*e1[2];
-    double g_proj[3] = {
-        g[0] - g_dot_e1 * e1[0],
-        g[1] - g_dot_e1 * e1[1],
-        g[2] - g_dot_e1 * e1[2]
-    };
-    double g_proj_norm = sqrt(g_proj[0]*g_proj[0] + g_proj[1]*g_proj[1] + g_proj[2]*g_proj[2]);
-
-    double e2[3];
-    if (g_proj_norm > 1e-12) {
-        e2[0] = g_proj[0] / g_proj_norm;
-        e2[1] = g_proj[1] / g_proj_norm;
-        e2[2] = g_proj[2] / g_proj_norm;
-    } else {
-        // If gravity is parallel to rope, pick any orthogonal vector (e.g., global X)
-        e2[0] = (e1[0] == 0) ? 1.0 : 0.0;
-        e2[1] = (e1[1] == 0) ? 1.0 : 0.0;
-        e2[2] = (e1[2] == 0) ? 1.0 : 0.0;
-    }
-
-    // Fill R = [e1 | e2] in column-major order (for compatibility with math libs)
-    for (int i = 0; i < 3; ++i) {
-        R_3x2[i * 2 + 0] = e1[i];  // Column 0
-        R_3x2[i * 2 + 1] = e2[i];  // Column 1
-    }
-    //printf("R_3x2 = [%.3f %.3f; %.3f %.3f; %.3f %.3f]\n",
-    //    R_3x2[0], R_3x2[1], R_3x2[2], R_3x2[3], R_3x2[4], R_3x2[5]);
-}
-
-void project_to_2d_rope_frame(
-    const double *points_3D,  // flat array of 3D points: length = 3*(n-1)
-    int n,                    // total number of points = (n-1)
-    const double *R_3x2,      // 3x2 projection matrix (row-major)
-    double *points_2D         // output: flat array of 2D points: length = 2*(n-1)
-) {
-    for (int i = 0; i < n - 1; ++i) {
-        const double *p3 = &points_3D[i * 3];
-        double *p2 = &points_2D[i * 2];
-
-        p2[0] = p3[0] * R_3x2[0] + p3[1] * R_3x2[2] + p3[2] * R_3x2[4];  // dot(p, e1)
-        p2[1] = p3[0] * R_3x2[1] + p3[1] * R_3x2[3] + p3[2] * R_3x2[5];  // dot(p, e2)
-    }
-}
-
-void reconstruct_from_2d_rope_frame(
-    const double *points_2D,  // flat array of 2D points: length = 2*(n-1)
-    int n,                    // total number of points = (n-1)
-    const double *R_3x2,      // 3x2 basis matrix (row-major)
-    double *points_3D         // output: flat array of 3D points: length = 3*(n-1)
-) {
-    for (int i = 0; i < n - 1; ++i) {
-        const double *p2 = &points_2D[i * 2];
-        double *p3 = &points_3D[i * 3];
-
-        p3[0] = R_3x2[0] * p2[0] + R_3x2[1] * p2[1];
-        p3[1] = R_3x2[2] * p2[0] + R_3x2[3] * p2[1];
-        p3[2] = R_3x2[4] * p2[0] + R_3x2[5] * p2[1];
-    }
-}
-
-static int solve_linear_system(double *A, double *b, int n) {
-    for (int k = 0; k < n; ++k) {
-
-        for (int i = 0; i < n; ++i)
-            A[i * n + i] += 1e-8;
-
-        int max_row = k;
-        for (int i = k + 1; i < n; ++i)
-            if (fabs(A[i * n + k]) > fabs(A[max_row * n + k])) max_row = i;
-        if (fabs(A[max_row * n + k]) < 1e-12) return -1;
-
-        if (max_row != k) {
-            for (int j = 0; j < n; ++j) {
-                double tmp = A[k * n + j];
-                A[k * n + j] = A[max_row * n + j];
-                A[max_row * n + j] = tmp;
-            }
-            double tmp = b[k]; b[k] = b[max_row]; b[max_row] = tmp;
-        }
-
-        for (int i = k + 1; i < n; ++i) {
-            double f = A[i * n + k] / A[k * n + k];
-            for (int j = k; j < n; ++j)
-                A[i * n + j] -= f * A[k * n + j];
-            b[i] -= f * b[k];
-        }
-    }
-
-    for (int i = n - 1; i >= 0; --i) {
-        for (int j = i + 1; j < n; ++j)
-            b[i] -= A[i * n + j] * b[j];
-        b[i] /= A[i * n + i];
-    }
-    return 0;
-}
-
-int newton_legacy(
-    double* x, const double* P1, const double* P2, int n,
-    double* s0, double c, double m, const double* g_vec)
-{
-    int dof = (n - 1) * 3;
-    int iterfailed = 0;
-    double* res = malloc(dof * sizeof(double));
-    double* dx = malloc(dof * sizeof(double));
-    double* J = malloc(dof * dof * sizeof(double));
-    if (!res || !dx || !J) return -1;
-
-    for (int iter = 0; iter < LEGACY_MAX_ITER; ++iter) {
-        compute_residuals(x, P1, P2, n, s0, c, m, g_vec, res);
-    
-        double res_norm = 0.0;
-        for (int i = 0; i < dof; ++i) res_norm += res[i] * res[i];
-        res_norm = sqrt(res_norm);
-    
-        //printf("Newton iter %d, residual norm = %.3e\n", iter, res_norm);
-        if (res_norm < TOL) {
-            printf("\nNewton Legacy CONVERGED at iteration %d with residual %.3e\n", iter, res_norm);
-            break;
-        }
-    
-        // Finite difference Jacobian
-        for (int i = 0; i < dof; ++i) {
-            double eps = fmax(1e-6, 1e-4 * fabs(x[i]));
-            double orig = x[i];
-            x[i] = orig + eps;
-            double* res_plus = malloc(dof * sizeof(double));
-            compute_residuals(x, P1, P2, n, s0, c, m, g_vec, res_plus);
-    
-            x[i] = orig - eps;
-            double* res_minus = malloc(dof * sizeof(double));
-            compute_residuals(x, P1, P2, n, s0, c, m, g_vec, res_minus);
-    
-            x[i] = orig;
-            for (int j = 0; j < dof; ++j)
-                J[j * dof + i] = (res_plus[j] - res_minus[j]) / (2 * eps);
-    
-            free(res_plus);
-            free(res_minus);
-        }
-    
-        // Solve J dx = -res
-        memcpy(dx, res, dof * sizeof(double));
-        int status = solve_linear_system(J, dx, dof);
-        if (status != 0) {
-            //printf(" Linear solve failed at iteration %d\n", iter);
-            break;
-        }
-        for (int i = 0; i < dof; ++i)
-            dx[i] *= -1;  // because J dx = -res
-    
-        // Damping
-        for (int i = 0; i < dof; ++i)
-            dx[i] *= 0.5;
-    
-        // Line search
-        double alpha = 1.0;
-        for (int trial = 0; trial < LS_MAX_TRIALS; ++trial) {
-            double* x_trial = malloc(dof * sizeof(double));
-            for (int i = 0; i < dof; ++i)
-                x_trial[i] = x[i] + alpha * dx[i];
-    
-            double* res_trial = malloc(dof * sizeof(double));
-            compute_residuals(x_trial, P1, P2, n, s0, c, m, g_vec, res_trial);
-    
-            double res_trial_norm = 0.0;
-            for (int i = 0; i < dof; ++i)
-                res_trial_norm += res_trial[i] * res_trial[i];
-            res_trial_norm = sqrt(res_trial_norm);
-    
-            if (res_trial_norm < res_norm) {
-                memcpy(x, x_trial, dof * sizeof(double));
-                free(x_trial);
-                free(res_trial);
-                break;
-            } else {
-                alpha *= LS_REDUCTION;
-                free(x_trial);
-                free(res_trial);
-            }
-    
-            //if (trial == LS_MAX_TRIALS - 1)
-            //    printf("Line search failed to reduce residual at iteration %d\n", iter);
-        }
-
-        if (iter == LEGACY_MAX_ITER - 1) 
-            iterfailed = 1;
-
-    }
-
-    free(res);
-    free(dx);
-    free(J);
-    if (iterfailed ==1){
-        printf("\nNewton Legacy did NOT CONVERGE with max iter =  %d\n", LEGACY_MAX_ITER);
-        return -1;
-    }
-    return 0;
 }
 
 static void report_endpoint_forces(
@@ -702,7 +509,7 @@ void report_endpoint_forces_weight_partitioned(
     double F_P2_parallel[3], F_P2_perp[3];
     project_parallel_and_perpendicular(F_P2, g_unit_vec, F_P2_parallel, F_P2_perp);
 
-    printf("\n=== Endpoint Force Decomposition (Spring elongation Newton) ===\n");
+    printf("\n=== Endpoint Force Decomposition (Weight) ===\n");
     printf("|P1 F| = %.6f, |F_hor| = %.6f, |F_ver| = %.6f, F_P1: [%f, %f, %f]\n",norm3(F_P1),norm3(F_P1_parallel),norm3(F_P1_perp), F_P1[0], F_P1[1], F_P1[2]);
     printf("|P2 F| = %.6f, |F_hor| = %.6f, |F_ver| = %.6f, F_P2: [%f, %f, %f]\n",norm3(F_P2),norm3(F_P2_parallel),norm3(F_P2_perp), F_P2[0], F_P2[1], F_P2[2]);
 
@@ -793,6 +600,23 @@ double find_sag_depth(
     return a_mid;
 }
 
+// Arc length from t=0 to t=t_target
+static double arc_length_to_t(const double* P1, const double* P2, const double* dir, double a, double t_target, int steps) {
+    double sum = 0.0;
+    double prev[3], curr[3];
+    cubic_parabola_point(prev, P1, P2, dir, a, 0.0);
+    for (int i = 1; i <= steps; ++i) {
+        double t = t_target * ((double)i / steps);
+        cubic_parabola_point(curr, P1, P2, dir, a, t);
+        double dx = curr[0] - prev[0];
+        double dy = curr[1] - prev[1];
+        double dz = curr[2] - prev[2];
+        sum += sqrt(dx*dx + dy*dy + dz*dz);
+        for (int j = 0; j < 3; ++j) prev[j] = curr[j];
+    }
+    return sum;
+}
+
 double init_dynamic_relaxation(
     double* x, const double* P1, const double* P2,
     int n, const double* g_vec,
@@ -800,32 +624,48 @@ double init_dynamic_relaxation(
 {
     double L0_scaled = L0 / scale_pos;
 
+    // Normalize gravity vector
     double g_norm = sqrt(g_vec[0]*g_vec[0] + g_vec[1]*g_vec[1] + g_vec[2]*g_vec[2]);
     double e_g[3] = {g_vec[0]/g_norm, g_vec[1]/g_norm, g_vec[2]/g_norm};
+    double dir[3] = {-e_g[0], -e_g[1], -e_g[2]};  // sag direction
 
-    // Sag direction is always opposite gravity
-    double dir[3] = {-e_g[0], -e_g[1], -e_g[2]};
-
-    // Fit parabola to match L0 using arc length
+    // Fit parabola to match L0
     double a_low = 0.0, a_high = 1.0, a_mid = 0.0;
     for (int iter = 0; iter < 100; ++iter) {
         a_mid = 0.5 * (a_low + a_high);
-        double arc_len = arc_length_cubic_parabola(P1, P2, dir, a_mid, n);
+        double arc_len = arc_length_to_t(P1, P2, dir, a_mid, 1.0, ARC_STEPS_FINE);
         if (fabs(arc_len - L0_scaled) < 1e-6) break;
         if (arc_len < L0_scaled) a_low = a_mid;
         else a_high = a_mid;
     }
 
-    // Apply parabola sag in gravity direction
+    double total_arc = arc_length_to_t(P1, P2, dir, a_mid, 1.0, ARC_STEPS_FINE);
+
+    // Internal points via Newton-Raphson arc-length solve
     for (int i = 0; i < n - 1; ++i) {
+        double s_target = total_arc * (double)(i + 1) / n;
+
+        // Initial guess: linear t
         double t = (double)(i + 1) / n;
-        double sag = -4.0 * a_mid * t * (1.0 - t);
-        for (int j = 0; j < 3; ++j)
-            x[i * 3 + j] = (1 - t) * P1[j] + t * P2[j] + sag * dir[j];
+
+        for (int it = 0; it < NEWTON_MAX; ++it) {
+            double s_val = arc_length_to_t(P1, P2, dir, a_mid, t, ARC_STEPS_FINE);
+            double s_val_eps = arc_length_to_t(P1, P2, dir, a_mid, t + 1e-6, ARC_STEPS_FINE);
+            double dsdT = (s_val_eps - s_val) / 1e-6;
+
+            double delta = (s_val - s_target) / dsdT;
+            t -= delta;
+            if (fabs(delta) < NEWTON_TOL) break;
+            if (t < 0.0) t = 0.0;
+            if (t > 1.0) t = 1.0;
+        }
+
+        // Compute point at converged t
+        cubic_parabola_point(&x[i * 3], P1, P2, dir, a_mid, t);
     }
 
-    // Compute s0_init from actual distances in x[] and endpoints
-    double s0_post_init_sum = 0;
+    // Compute s0_post_init
+    double s0_post_init_sum = 0.0;
     for (int i = 0; i < n; ++i) {
         double xi[3], xi1[3];
         if (i == 0) {
@@ -844,93 +684,97 @@ double init_dynamic_relaxation(
                 xi1[j] = x[i * 3 + j];
             }
         }
-        double dx[3] = {
-            xi1[0] - xi[0],
-            xi1[1] - xi[1],
-            xi1[2] - xi[2]
-        };
-        s0_post_init[i] = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]) ;
+        double dx = xi1[0] - xi[0];
+        double dy = xi1[1] - xi[1];
+        double dz = xi1[2] - xi[2];
+        s0_post_init[i] = sqrt(dx*dx + dy*dy + dz*dz);
         s0_post_init_sum += s0_post_init[i];
-    } 
-    return  s0_post_init_sum;
+    }
+
+    return s0_post_init_sum;
 }
 
 double dynamic_relaxation(
-    double* x, const double* P1_scaled, const double* P2_scaled, int n,
-    double* s0_init_scaled, double c_scaled, double m_scaled, const double* g_vec_scaled,
-    double dt_given, int max_steps, double* s0_post_relax)
+    double* x, double *x_out, const double* P1, const double* P2, int n,
+    double* s0_post_init, double c, double m, const double* g_vec,
+    double dt_given, int max_steps, double scale_pos)
 {
     int dof = (n - 1) * 3;
-    double* v = calloc(dof, sizeof(double));       // velocities
-    double* a = malloc(dof * sizeof(double));      // accelerations (residuals/m)
-    double* res = malloc(dof * sizeof(double));    // raw residuals
+
+    memcpy(x_out, x, sizeof(double) * dof);
+
+    double* v = calloc(dof, sizeof(double));
+    double* F = calloc(dof, sizeof(double));
     int converged = 0;
 
-    if (!v || !a || !res) return 1;
-
-    const double damping = 0.98;
-    const double tol = 1e-5;
+    double omega = sqrt(c / m);
+    double dt = dt_given > 0 ? fmin(dt_given, 0.05 / omega) : 0.05 / omega;
+    double damping = sqrt(c * m);  // critical damping
+    double damping_target = 1.2 * damping;
+    double prev_v_norm = 1e10;
 
     for (int step = 0; step < max_steps; ++step) {
+        memset(F, 0, dof * sizeof(double));
 
-        compute_residuals(x, P1_scaled, P2_scaled, n, s0_init_scaled, c_scaled, m_scaled, g_vec_scaled, res);
+        for (int i = 0; i < n - 1; ++i) {
+            const double* prev = (i == 0) ? P1 : &x_out[(i - 1) * 3];
+            const double* mid  = &x_out[i * 3];
+            const double* next = (i == n - 2) ? P2 : &x_out[(i + 1) * 3];
 
-        double res_norm = 0.0;
-        for (int i = 0; i < dof; ++i) {
-            a[i] = res[i] / m_scaled;
-            res_norm += res[i] * res[i];
+            double dx1[3] = {mid[0] - prev[0], mid[1] - prev[1], mid[2] - prev[2]};
+            double dx2[3] = {mid[0] - next[0], mid[1] - next[1], mid[2] - next[2]};
+
+            double L1 = sqrt(dx1[0]*dx1[0] + dx1[1]*dx1[1] + dx1[2]*dx1[2]);
+            double L2 = sqrt(dx2[0]*dx2[0] + dx2[1]*dx2[1] + dx2[2]*dx2[2]);
+
+            for (int j = 0; j < 3; ++j) {
+                double F1 = -c * (L1 - s0_post_init[i]) / (L1 + 1e-12) * dx1[j];
+                double F2 = -c * (L2 - s0_post_init[i + 1]) / (L2 + 1e-12) * dx2[j];
+                F[i * 3 + j] += F1 + F2 + m * g_vec[j] - damping * v[i * 3 + j];
+            }
         }
-        res_norm = sqrt(res_norm);
 
-        if (res_norm < tol) {
-            printf("\nDynamic relaxation CONVERGED at step %d with residual %.3e\n", step, res_norm);
+        double v_norm_sq = 0.0;
+        for (int i = 0; i < dof; ++i) {
+            double a = F[i] / m;
+            v[i] += a * dt;
+            x_out[i] += v[i] * dt;
+            v_norm_sq += v[i] * v[i];
+        }
+
+        if (step % 100 == 0) {
+            if (damping > damping_target)
+                damping *= 0.95;
+            if (v_norm_sq < prev_v_norm && dt < 0.1 / omega)
+                dt *= 1.02;
+            prev_v_norm = v_norm_sq;
+        }
+
+        if (v_norm_sq < 1e-7 && step > 1000) {
+            damping *= 1.1;
+            dt *= 0.9;
+        }
+
+        if (v_norm_sq < 1e-8 && step > 5000) {
+            memset(v, 0, dof * sizeof(double));
+        }
+        //if (step % 10000 == 0){
+        //    printf("v_norm_sq %.6e\n",v_norm_sq);
+        //} 
+
+        if (v_norm_sq < 1e-8) {
+            printf("\nDynamic relaxation CONVERGED at step %d with v_norm_sq %.3e\n", step, v_norm_sq);
             converged = 1;
             break;
-            //goto cleanup_dyn;
-        }
-
-        // Semi-implicit Euler update with damping
-        for (int i = 0; i < dof; ++i) {
-            v[i] = damping * (v[i] + dt_given * a[i]);
-            x[i] += dt_given * v[i];
         }
     }
- 
-       // Compute s0_relaxed from actual distances in x[] and endpoints
-       double s0_post_relax_sum = 0;
-       for (int i = 0; i < n; ++i) {
-        double xi[3], xi1[3];
-        if (i == 0) {
-            for (int j = 0; j < 3; ++j) {
-                xi[j] = P1_scaled[j];
-                xi1[j] = x[j];
-            }
-        } else if (i == n - 1) {
-            for (int j = 0; j < 3; ++j) {
-                xi[j] = x[(n - 2) * 3 + j];
-                xi1[j] = P2_scaled[j];
-            }
-        } else {
-            for (int j = 0; j < 3; ++j) {
-                xi[j] = x[(i - 1) * 3 + j];
-                xi1[j] = x[i * 3 + j];
-            }
-        }
-        double dx[3] = {
-            xi1[0] - xi[0],
-            xi1[1] - xi[1],
-            xi1[2] - xi[2]
-        };
-        s0_post_relax[i] = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]) ;
-        s0_post_relax_sum += s0_post_relax[i];
-    } 
+    free(v);
+    free(F);
     if (converged == 0){
         printf("\nDynamic relaxation didn NOT CONVERGE after %d iterations\n", max_steps);
-    }     
-    free(v);
-    free(a);
-    free(res);
-    return s0_post_relax_sum;
+        return -1;
+    }; 
+    return 0;
 }
 
 int analytic_newton_solver_3d(
@@ -1122,40 +966,63 @@ DLL_EXPORT int solve_spring_mass_c(
     // --- Initialize rope with sag ---
     double s0_post_init_sum = init_dynamic_relaxation(
         x, P1_scaled, P2_scaled, n, g_vec_scaled, s0_post_init, L0, scale_pos);
-/*
+
+    for (int i = 0; i < dof; ++i) {
+        x_init[i] = x[i] * scale_pos;
+        }
     printf("\nPositions initiated from parabola:\n");
     for (int i = 0; i < n - 1; ++i) {
-        printf("s0_post_init %d : %f    ", i, s0_post_init[i] * scale_pos);
-        printf("Node %d: [%f, %f, %f]\n", i + 1,
+        printf("s0_post_init %-2d : %-10.6f    ", i, s0_post_init[i] * scale_pos);
+        printf("Node %-3d: [%-12.6f, %12.6f, %12.6f]\n", i + 1,
             x[i*3+0] * scale_pos, x[i*3+1] * scale_pos, x[i*3+2] * scale_pos);
     }
-    printf("s0_post_init %d : %f    \n",n-1,s0_post_init[n-1] * scale_pos);
-*/    
+    printf("s0_post_init %-3d : %f    \n",n-1,s0_post_init[n-1] * scale_pos);    
     printf("Initial Length = %f, Delta Length = %f]\n", s0_post_init_sum * scale_pos, s0_post_init_sum * scale_pos - L0);
 
     // --- Relax dynamically ---
-    double s0_post_relax_sum = dynamic_relaxation(
-        x, P1_scaled, P2_scaled, n, s0_init_scaled, c_scaled, m_scaled, g_vec_scaled,
-        0.001, 1000000, s0_post_relax);
-/*
+
+    status = dynamic_relaxation(
+        x, x_relaxed, P1_scaled, P2_scaled, n, s0_init_scaled, c_scaled, m_scaled, g_vec_scaled,0.001, 10000000, scale_pos);
+    if (status != 0) {
+        printf("\n Dynamic relaxation failed\n");
+    }
+    for (int i = 0; i < dof; ++i) {
+        x_relaxed[i] *= scale_pos;
+    }
+    // Compute Dynamic Relaxation segment lengths
+    double s0_post_relax_sum = 0;
+    for (int i = 0; i < n; ++i) {
+        double xi[3], xi1[3];
+        if (i == 0) {
+            for (int j = 0; j < 3; ++j) {
+                xi[j]  = P1[j];
+                xi1[j] = x_relaxed[j];
+            }
+        } else if (i == n - 1) {
+            for (int j = 0; j < 3; ++j) {
+                xi[j]  = x_relaxed[(n - 2) * 3 + j];
+                xi1[j] = P2[j];
+            }
+        } else {
+            for (int j = 0; j < 3; ++j) {
+                xi[j]  = x_relaxed[(i - 1) * 3 + j];
+                xi1[j] = x_relaxed[i * 3 + j];
+            }
+        }
+        double dx[3] = {
+            xi1[0] - xi[0], xi1[1] - xi[1], xi1[2] - xi[2]
+        };
+        s0_post_relax[i] = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]);
+        s0_post_relax_sum += s0_post_relax[i];
+    } 
     printf("\nPositions after dynamic relaxation:\n");
     for (int i = 0; i < n - 1; ++i) {
-        printf("s0_post_relax %d : %f    ", i, s0_post_relax[i] * scale_pos);
-        printf("Node %d: [%f, %f, %f]\n", i + 1,
-            x[i*3+0] * scale_pos, x[i*3+1] * scale_pos, x[i*3+2] * scale_pos);
+        printf("s0_post_relax %-3d : %-10.6f    ", i, s0_post_relax[i]);
+        printf("Node %-3d: [%12.6f, %12.6f, %12.6f]\n", i + 1,
+            x_relaxed[i*3+0], x_relaxed[i*3+1], x_relaxed[i*3+2]);
     }
-    printf("s0_post_relax %d : %f    \n",n-1,s0_post_relax[n-1] * scale_pos);
-*/    
-    printf("Relaxed Length = %f, Delta Length = %f]\n\n", s0_post_relax_sum * scale_pos, s0_post_relax_sum * scale_pos - L0);
-
-    // Rescale DR results
-    for (int i = 0; i < dof; ++i)
-        x[i] *= scale_pos;
-
-    memcpy(x_relaxed, x, sizeof(double) * dof);
-
-    for (int i = 0; i < n; ++i)
-        s0_post_relax[i] *= scale_pos;
+    printf("s0_post_relax %d : %f    \n",n-1,s0_post_relax[n-1]);   
+    printf("Relaxed Length = %f, Delta Length = %f]\n\n", s0_post_relax_sum, s0_post_relax_sum - L0);
 
     // --- Newton 3D solver ---
 
@@ -1189,14 +1056,14 @@ DLL_EXPORT int solve_spring_mass_c(
         s0_post_newton_3d[i] = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]);
         s0_newton_3d_sum += s0_post_newton_3d[i];
     }    
-/*    printf("\nPositions after 3D Newton :\n");
+    printf("\nPositions after 3D Newton :\n");
     for (int i = 0; i < n - 1; ++i) {
-        printf("s0_post_3D_Newton %d : %f    ", i, s0_post_newton_3d[i] );
-        printf("Node %d: [%f, %f, %f]\n", i + 1,
+        printf("s0_post_3D_Newton %-3d : %-10.6f    ", i, s0_post_newton_3d[i] );
+        printf("Node %-3d: [%12.6f, %12.6f, %12.6f]\n", i + 1,
             x_newton_3d[i*3+0], x_newton_3d[i*3+1], x_newton_3d[i*3+2] );
     }
-    printf("s0_post_3D_Newton %d : %f    \n", n - 1, s0_post_newton_3d[n - 1]);
-*/
+    printf("s0_post_3D_Newton %-3d : %-10.6f    \n", n - 1, s0_post_newton_3d[n - 1]);
+
     printf("3D Newton Length = %f, Delta Length = %f]\n", s0_newton_3d_sum, s0_newton_3d_sum - L0); 
     
     // --- ENERGY solver ---    
@@ -1231,14 +1098,14 @@ DLL_EXPORT int solve_spring_mass_c(
         s0_post_energy[i] = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]);
         s0_energy_sum += s0_post_energy[i];
     }    
-/*    printf("\nPositions after Energy):\n");
+    printf("\nPositions after Energy):\n");
     for (int i = 0; i < n - 1; ++i) {
-        printf("s0_post_Energy %d : %f    ", i, s0_post_energy[i]);
-        printf("Node %d: [%f, %f, %f]\n", i + 1,
+        printf("s0_post_Energy %-3d : %-10.6f    ", i, s0_post_energy[i]);
+        printf("Node %-3d: [%12.6f, %12.6f, %12.6f]\n", i + 1,
             x_energy[i*3+0], x_energy[i*3+1], x_energy[i*3+2]);
     }
-    printf("s0_post_Energy %d : %f\n", n - 1, s0_post_energy[n - 1]);
-*/    
+    printf("s0_post_Energy %-3d : %-10.6f\n", n - 1, s0_post_energy[n - 1]);
+   
     printf("Energy Length = %f, Delta Length = %f\n\n", s0_energy_sum, s0_energy_sum - L0);
 
     // --- chose output ---
