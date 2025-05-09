@@ -25,6 +25,16 @@
 #define ARC_STEPS_FINE 1000
 #define NEWTON_TOL     1e-10
 #define NEWTON_MAX     20
+
+typedef enum {
+    SOLVE_SUCCESS = 0,
+    SOLVE_ERROR_NAN = -1,
+    SOLVE_ERROR_LINE_SEARCH_FAILED = -2,
+    SOLVE_ERROR_JACOBIAN_FAILED = -3,
+    SOLVE_ERROR_MAX_ITER = -4,
+    SOLVE_ERROR_ALLOC = -5
+} SolveStatus;
+
 extern void dgesv_(int* N, int* NRHS, double* A, int* LDA,
     int* IPIV, double* B, int* LDB, int* INFO);
 
@@ -207,7 +217,9 @@ int energy_minimize(
         for (int i = 0; i < dof; ++i) {
             if (!isfinite(grad[i])) {
                 printf("NaN in gradient at iter %d, index %d\n", iter, i);
-                goto cleanup;
+                free(grad); free(grad_prev); free(s); free(y); free(H);
+                free(p); free(x_prev); free(Hy);
+                return SOLVE_ERROR_NAN;
             }
             grad_norm += grad[i] * grad[i];
         }
@@ -215,7 +227,9 @@ int energy_minimize(
     
         if (grad_norm < tol) {
             printf("\nBFGS CONVERGED 3D in %d steps with grad norm %.3e\n", iter, grad_norm);
-            goto cleanup;
+            free(grad); free(grad_prev); free(s); free(y); free(H);
+            free(p); free(x_prev); free(Hy);
+            return 0;
         }
     
         // Compute p = -H * grad
@@ -234,9 +248,10 @@ int energy_minimize(
         for (int i = 0; i < dof; ++i) {
             x_trial[i] = x_out[i] + step_size * p[i];
             if (!isfinite(x_trial[i])) {
-                printf("NaN in x_trial at iter %d, index %d\n", iter, i);
-                free(x_trial);
-                goto cleanup;
+                //printf("NaN in x_trial at iter %d, index %d\n", iter, i);
+                free(grad); free(grad_prev); free(s); free(y); free(H);
+                free(p); free(x_prev); free(Hy);
+                return SOLVE_ERROR_NAN;
             }
         }
     
@@ -245,15 +260,19 @@ int energy_minimize(
         double energy = compute_total_energy(x_trial, P1, P2, n, s0, k, m, g_vec);
         
         if (!isfinite(energy)) {
-            printf("NaN in energy at iter %d\n", iter);
+            //printf("NaN in energy at iter %d\n", iter);
             free(x_trial);
-            goto cleanup;
+            free(grad); free(grad_prev); free(s); free(y); free(H);
+            free(p); free(x_prev); free(Hy);
+            return SOLVE_ERROR_NAN;
         }
         for (int i = 0; i < dof; ++i) {
             if (!isfinite(grad_trial[i])) {
-                printf("NaN in trial gradient at iter %d, index %d\n", iter, i);
+                //printf("NaN in trial gradient at iter %d, index %d\n", iter, i);
                 free(x_trial);
-                goto cleanup;
+                free(grad); free(grad_prev); free(s); free(y); free(H);
+                free(p); free(x_prev); free(Hy);
+                return SOLVE_ERROR_NAN;
             }
         }
     
@@ -264,8 +283,9 @@ int energy_minimize(
             free(x_trial);
         } else {
             //printf("Rejected step at iter %d: energy increased\n", iter);
-            free(x_trial);
-            goto cleanup;
+            free(grad); free(grad_prev); free(s); free(y); free(H);
+            free(p); free(x_prev); free(Hy);
+            return 0;
         }
     
         prev_energy = energy;
@@ -282,7 +302,9 @@ int energy_minimize(
         for (int i = 0; i < dof; ++i) {
             if (!isfinite(s[i]) || !isfinite(y[i])) {
                 printf("NaN in s or y at iter %d, index %d\n", iter, i);
-                goto cleanup;
+                free(grad); free(grad_prev); free(s); free(y); free(H);
+                free(p); free(x_prev); free(Hy);
+                return SOLVE_ERROR_NAN;
             }
             sTy += s[i] * y[i];
         }
@@ -317,7 +339,7 @@ int energy_minimize(
 cleanup:
     free(grad); free(grad_prev); free(s); free(y); free(H);
     free(p); free(x_prev); free(Hy);
-    return 0;
+    return SOLVE_ERROR_MAX_ITER;
 }
 
 
@@ -361,7 +383,7 @@ static void add_spring_jacobian(double *J, int i, int j, int dof, const double *
 static void report_endpoint_forces(
     const double* P1, const double* P2, const double* x, int n,
     const double* s0_rest, double c, const double* g_vec,
-    double m, double scale_force)
+    double m, double scale_force, double total_mass, double* F_P1_out,double* F_P2_out)
 {
     double F_P1[3] = {0}, F_P2[3] = {0};
     compute_spring_force(&x[0], P1, s0_rest[0], c, F_P1); // Force ON P1 from x[0]
@@ -416,12 +438,22 @@ static void report_endpoint_forces(
     // Net external force (in Newtons now)
     double F_net[3] = {F_P1[0] + F_P2[0], F_P1[1] + F_P2[1], F_P1[2] + F_P2[2]};
 
-    printf("Net external force should be m_total * g_vec: [%e, %e, %e]\n", F_net[0], F_net[1], F_net[2]);
+    double TM[3];
+    TM[0] = total_mass * g_vec[0];
+    TM[1] = total_mass * g_vec[1];
+    TM[2] = total_mass * g_vec[2];
+    double TMG = norm3(TM);
+
+    printf("Delta F (F_net - m*g = %e\n", TMG -norm3(F_net)); 
+    
+    F_P1_out = F_P1;
+    F_P2_out = F_P2;   
 }
 
 void report_endpoint_forces_weight_partitioned(
     const double* P1, const double* P2, const double* x, int n,
-    const double* g_vec, double total_mass)
+    const double* g_vec, double total_mass,
+    double* F_P1_out, double* F_P2_out)
 {
     int lowest_index = -1;
     double min_z = 1e20;
@@ -518,9 +550,17 @@ void report_endpoint_forces_weight_partitioned(
         F_P1[1] + F_P2[1],
         F_P1[2] + F_P2[2]
     };
-    printf("Net external force should be m_total * g_vec: [%e, %e, %e]\n",
-        F_net[0], F_net[1], F_net[2]);
-    }
+    double TM[3];
+        TM[0] = total_mass * g_vec[0];
+        TM[1] = total_mass * g_vec[1];
+        TM[2] = total_mass * g_vec[2];
+    double TMG = norm3(TM);
+
+    printf("Delta F (F_net - m*g = %e\n", TMG -norm3(F_net));
+
+    F_P1_out = F_P1;
+    F_P2_out = F_P2;
+}
 
 void lin_comb3(double out[3], const double a, const double v1[3], const double b, const double v2[3]) {
     for (int i = 0; i < 3; ++i)
@@ -772,7 +812,7 @@ double dynamic_relaxation(
     free(F);
     if (converged == 0){
         printf("\nDynamic relaxation didn NOT CONVERGE after %d iterations\n", max_steps);
-        return -1;
+        return SOLVE_ERROR_MAX_ITER;
     }; 
     return 0;
 }
@@ -827,9 +867,9 @@ int analytic_newton_solver_3d(
         int info, nrhs = 1, lda = dof, ldb = dof;
         dgesv_(&dof, &nrhs, J, &lda, ipiv, dx, &ldb, &info);
         if (info != 0) {
-            printf("dgesv failed (info = %d)\n", info);
+            //printf("dgesv failed (info = %d)\n", info);
             free(res); free(J); free(ipiv); free(dx);
-            return -1;
+            return SOLVE_ERROR_JACOBIAN_FAILED;
         }
 
         // --- Armijo line search ---
@@ -851,11 +891,6 @@ int analytic_newton_solver_3d(
             double trial_res_norm2 = 0.0;
             for (int i = 0; i < dof; ++i)
                 trial_res_norm2 += res_trial[i] * res_trial[i];
-
-            //printf("  alpha=%.1e | res sqr=%.3e | Armijo %.3e <= %.3e\n",
-            //       alpha, trial_res_norm2,
-            //       trial_res_norm2,
-            //       orig_res_norm2 + c1 * alpha * (-orig_res_norm2));
 
             if (trial_res_norm2 <= orig_res_norm2 + c1 * alpha * (-orig_res_norm2)) {
                 memcpy(x_out, x_trial, sizeof(double) * dof);
@@ -887,9 +922,9 @@ int analytic_newton_solver_3d(
         }
     }
 
-    printf("3D Newton did NOT CONVERGE after %d iterations\n", max_iter);
+    //printf("3D Newton did NOT CONVERGE after %d iterations\n", max_iter);
     free(res); free(J); free(ipiv); free(dx);
-    return -1;
+    return SOLVE_ERROR_MAX_ITER;
 }
 
 DLL_EXPORT int solve_spring_mass_c(
@@ -916,6 +951,11 @@ DLL_EXPORT int solve_spring_mass_c(
     double *s0_post_energy = malloc(n * sizeof(double));
     double *s0_post_newton_3d = malloc(n * sizeof(double));
     double *dx = malloc(dof * sizeof(double));
+    double F_P1_out_w[3];
+    double F_P2_out_w[3];
+    double F_P1_out_n[3];
+    double F_P2_out_n[3];
+
 
     if (!x || !x_init || !x_relaxed || !x_energy || !x_newton_3d ||!s0_init || !s0_init_scaled ||
          !s0_post_init || !s0_post_relax || !s0_post_newton_3d || !s0_post_energy || !dx )
@@ -1112,9 +1152,9 @@ DLL_EXPORT int solve_spring_mass_c(
 
     memcpy(out_positions, x_energy, dof * sizeof(double));
 
-    report_endpoint_forces(P1, P2, x_newton_3d, n, s0_post_relax, c, g_vec, m, scale_force);
+    report_endpoint_forces(P1, P2, x_newton_3d, n, s0_post_relax, c, g_vec, m, scale_force,total_mass, F_P1_out_n, F_P2_out_n);
 
-    report_endpoint_forces_weight_partitioned(P1,P2,x_energy,n,g_vec,total_mass);
+    report_endpoint_forces_weight_partitioned(P1,P2,x_energy,n,g_vec,total_mass, F_P1_out_w, F_P2_out_w);
 
     free(x); free(x_init); free(x_relaxed); free(x_energy);
     free(x_newton_3d); free(s0_init); free(s0_init_scaled); free(s0_post_init); free(s0_post_relax);

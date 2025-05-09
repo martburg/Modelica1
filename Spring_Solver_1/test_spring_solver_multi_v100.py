@@ -5,31 +5,33 @@ import matplotlib.pyplot as plt
 from numpy.ctypeslib import ndpointer
 
 # --- Step 1: Ensure mingw64/bin is in PATH ---
-mingw_bin = r"C:\msys64\mingw64\bin"
-if mingw_bin not in os.environ["PATH"]:
-    print(f"🛠 Adding {mingw_bin} to PATH")
-    os.environ["PATH"] = mingw_bin + ";" + os.environ["PATH"]
-else:
-    print(f"✅ {mingw_bin} is already in PATH")
+#mingw_bin = r"C:\msys64\mingw64\bin"
+#if mingw_bin not in os.environ["PATH"]:
+#    print(f"🛠 Adding {mingw_bin} to PATH")
+##    os.environ["PATH"] = mingw_bin + ";" + os.environ["PATH"]
+#else:
+#    print(f"✅ {mingw_bin} is already in PATH")
 
 # --- Step 2: Add your DLL folder to PATH ---
-dll_dir = r"C:\Users\Martin\Documents\MapleSim\Modelica\Modelica1\Resources\Library"
-if dll_dir not in os.environ["PATH"]:
-    print(f"🛠 Adding {dll_dir} to PATH")
-    os.environ["PATH"] = dll_dir + ";" + os.environ["PATH"]
+#dll_dir = r"C:\Users\Martin\Documents\MapleSim\Modelica\Modelica1\Resources\Library"
+#if dll_dir not in os.environ["PATH"]:
+#    print(f"🛠 Adding {dll_dir} to PATH")
+#    os.environ["PATH"] = dll_dir + ";" + os.environ["PATH"]
 
 # --- Step 3: Define and check DLL path ---
-dll_path = os.path.join(dll_dir, "spring_solver_lapak.dll")
-print(f"🔍 Loading DLL from: {dll_path}")
-assert os.path.exists(dll_path), "❌ DLL file does not exist!"
+#dll_path = os.path.join(dll_dir, "spring_solver_lapak.dll")
+#print(f"🔍 Loading DLL from: {dll_path}")
+#assert os.path.exists(dll_path), "❌ DLL file does not exist!"
 
-lib = ctypes.CDLL(dll_path)
+
 
 # Load the DLL
 #dll_path = '.\\Resources\\Library\\spring_solver.dll'  # Change path as needed
 ##dll_path = '.\\Resources\\Library\\spring_solver_lapak.dll'  # Change path as needed
 #dll_path = '.\\Resources\\Library\\spring_solver_ref_ref.dll'  # Change path as needed
-#dll_path = './Resources/Library/solve_spring_mass_v22.so'
+dll_path = './Resources/Library/solve_spring_mass_v700.so'
+
+lib = ctypes.CDLL(dll_path)
 
 # Setup the prototype
 lib.solve_spring_mass_c.argtypes = [
@@ -105,15 +107,15 @@ def run_and_plot(P1, P2, n, total_mass, length_factor, rope_diameter, youngs_mod
     plt.show()
 
 # Example test cases
-run_and_plot(P1=[0, 0, 0], P2=[0, 1, 10], n=20, total_mass=1, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[20, 0, 0], P2=[50, 70, 10], n=20, total_mass=20, rope_diameter= 0.01, length_factor= 1.4, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 2], n=20, total_mass=25, rope_diameter= 0.01, length_factor= 1.3, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 3], n=20, total_mass=30, rope_diameter= 0.01, length_factor= 1.2, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=35, rope_diameter= 0.01, length_factor= 1.1, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=400, rope_diameter= 0.01, length_factor= 1.005, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=500, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=1000, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
-run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=40, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+run_and_plot(P1=[20, 0, 0], P2=[50, 70, 10], n=20,  total_mass=20, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+run_and_plot(P1=[20, 0, 0], P2=[50, 70, 10], n=200, total_mass=20, rope_diameter= 0.01, length_factor= 1.4, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+#run_and_plot(P1=[0, 0, 0], P2=[0, 100, 2], n=20, total_mass=25, rope_diameter= 0.01, length_factor= 1.3, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+#run_and_plot(P1=[0, 0, 0], P2=[0, 100, 3], n=20, total_mass=30, rope_diameter= 0.01, length_factor= 1.2, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+#un_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=35, rope_diameter= 0.01, length_factor= 1.1, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+#run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=400, rope_diameter= 0.01, length_factor= 1.005, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+#run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=500, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+#run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=1000, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
+#run_and_plot(P1=[0, 0, 0], P2=[0, 100, 0], n=20, total_mass=40, rope_diameter= 0.01, length_factor= 1.5, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
 #run_and_plot(P1=[0, 0, 0], P2=[0, 0.51, 10], n=20, total_mass=0.9, rope_diameter= 0.01, length_factor= 1.001, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
 #run_and_plot(P1=[0, 0, 0], P2=[0, 0.51, 10], n=20, total_mass=0.9, rope_diameter= 0.01, length_factor= 1.0001, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
 #run_and_plot(P1=[0, 0, 0], P2=[0, 0.51, 10], n=20, total_mass=0.9, rope_diameter= 0.01, length_factor= 1.00001, youngs_modulus= 1e10, g_vec=[0,0,-9.81])
