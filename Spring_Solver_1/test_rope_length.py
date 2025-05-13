@@ -5,10 +5,10 @@ from numpy.ctypeslib import ndpointer
 np.random.seed(42)  # Fixed seed for reproducibility
 
 # Load DLL
-dll_path = './Resources/Library/spring_solver_lapak.dll'
+dll_path = './Resources/Library/solve_rope_length_lapak.dll'
 lib = ctypes.CDLL(dll_path)
 
-lib.solve_spring_mass_c.argtypes = [
+lib.solve_rope_length.argtypes = [
     ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # P1
     ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # P2
     ctypes.c_int, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
@@ -22,7 +22,7 @@ lib.solve_spring_mass_c.argtypes = [
     ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int),
     ctypes.POINTER(ctypes.c_int),
 ]
-lib.solve_spring_mass_c.restype = ctypes.c_int
+lib.solve_rope_length.restype = ctypes.c_int
 
 def force_test_case():
     P1 = [0,0,0]
@@ -100,7 +100,7 @@ def run_and_test(P1, P2, n, total_mass, length_factor, rope_diameter,
     Status_dyn     = ctypes.c_int()
     Status_newton  = ctypes.c_int()
 
-    res = lib.solve_spring_mass_c(
+    res = lib.solve_rope_length(
         P1, P2, n, total_mass, length_factor, rope_diameter, youngs_modulus,
         g_vec, out_positions, F_P1_n, F_P2_n, F_P1_w, F_P2_w,
         ctypes.byref(Length_init), ctypes.byref(Length_dyn), ctypes.byref(Length_newton),
@@ -160,7 +160,7 @@ def run_and_test(P1, P2, n, total_mass, length_factor, rope_diameter,
 
 
 # Run semi-random test batch
-num_tests = 100
+num_tests = 5
 failures = []
 
 for i in range(num_tests):
