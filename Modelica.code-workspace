@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"cmath": "c",
+			"random": "c",
+			"limits": "c",
+			"algorithm": "c"
+		}
+	}
+}
