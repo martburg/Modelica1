@@ -39,6 +39,10 @@ static int CURRENT_LOG_LEVEL = LOG_NONE;  // Default: silent
 #define NEWTON_TOL     1e-10
 #define NEWTON_MAX     20
 
+#define MAX_ITER_CAT 100
+#define TOL_CAT 1e-8
+#define SIGN(x) ((x) >= 0 ? 1 : -1)
+
 extern void dgesv_(int* N, int* NRHS, double* A, int* LDA,
     int* IPIV, double* B, int* LDB, int* INFO);
 
@@ -48,6 +52,102 @@ extern void dgesv_(int* N, int* NRHS, double* A, int* LDA,
 static inline double norm3(const double v[3]) {
     return sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
 }
+static void normalize3(double v[3]) {
+    double n = norm3(v);
+    if (n > 1e-12) {
+        v[0] /= n; v[1] /= n; v[2] /= n;
+    }
+}
+
+static void cross3(const double a[3], const double b[3], double out[3]) {
+    out[0] = a[1]*b[2] - a[2]*b[1];
+    out[1] = a[2]*b[0] - a[0]*b[2];
+    out[2] = a[0]*b[1] - a[1]*b[0];
+}
+
+static double catenary_arc_length(double a, double D) {
+    return 2.0 * a * sinh(D / (2.0 * a));
+}
+
+static double solve_catenary_a(double D, double L) {
+    double a_low = 1e-6, a_high = 1e6;
+    for (int i = 0; i < MAX_ITER_CAT; ++i) {
+        double a_mid = 0.5 * (a_low + a_high);
+        double s = catenary_arc_length(a_mid, D);
+        if (fabs(s - L) < TOL_CAT * L)
+            return a_mid;
+        if (s > L)
+            a_high = a_mid;
+        else
+            a_low = a_mid;
+    }
+    return 0.5 * (a_low + a_high);
+}
+
+void compute_catenary_initializer_3d(
+    const double P1[3], const double P2[3],
+    int n, double L, const double g_vec[3],
+    double *x_out /* size (n-2)*3 */)
+{
+    
+    double d[3] = {P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]};
+    double e_x[3] = {d[0], d[1], d[2]};
+    normalize3(e_x);
+
+    double e_z[3] = {g_vec[0], g_vec[1], g_vec[2]};
+    normalize3(e_z);
+
+    double e_y[3];
+    cross3(e_z, e_x, e_y);
+    if (norm3(e_y) < 1e-8) {
+        double fallback[3] = {1.0, 0.0, 0.0};
+        cross3(e_z, fallback, e_y);
+    }
+    normalize3(e_y);
+    cross3(e_x, e_y, e_z);  // re-orthogonalize
+
+    // Rotation matrix R: world = R * local + P1
+    double R[3][3] = {
+        {e_x[0], e_y[0], e_z[0]},
+        {e_x[1], e_y[1], e_z[1]},
+        {e_x[2], e_y[2], e_z[2]}
+    };
+
+    // Project into local frame
+    double dx = d[0]*e_x[0] + d[1]*e_x[1] + d[2]*e_x[2];
+    double dz = d[0]*e_z[0] + d[1]*e_z[1] + d[2]*e_z[2];
+
+    double Dx = fabs(dx);
+    double a = solve_catenary_a(Dx, L);
+
+    // Evaluate catenary
+    double x1 = 0.0, x2 = Dx;
+    double xm = 0.5 * (x1 + x2);
+    double z_c = a * cosh((x1 - xm) / a);
+    double z_d = a * cosh((x2 - xm) / a);
+    double z_offset = 0.5 * dz - 0.5 * (z_c - z_d);
+
+    for (int i = 1; i < n; ++i) {
+        double t = (double)i / (n - 1);
+        double x = x1 + t * (x2 - x1);
+        double z = a * cosh((x - xm) / a) - z_c + z_offset;
+
+        // Reproject into world
+        double p_local[3] = {
+            (dx >= 0 ? x : -x),
+            0.0,
+            (dz >= 0 ? z : -z)
+        };
+
+        for (int j = 0; j < 3; ++j) {
+            x_out[(i-1)*3 + j] = P1[0]*R[0][j] + P1[1]*R[1][j] + P1[2]*R[2][j];
+            for (int k = 0; k < 3; ++k) {
+                x_out[(i-1)*3 + j] += R[k][j] * p_local[k];
+            }
+        }
+    }
+}
+
 
 double vec3_dot(const double v1[3], const double v2[3]) {
     return v1[0]*v2[0] + v1[1]*v2[1] + v1[2]*v2[2];
@@ -304,9 +404,9 @@ static double arc_length_to_t(const double* P1, const double* P2, const double* 
 double init_dynamic_relaxation(
     double* x, const double* P1, const double* P2,
     int n, const double* g_vec,
-    double* s0_post_init, double L0, double scale_pos)
+    double* s0_post_init, double L0_scaled, double scale_pos)
 {
-    double L0_scaled = L0 / scale_pos;
+    //double L0_scaled = L0 / scale_pos;
 
     // Normalize gravity vector
     double g_norm = sqrt(g_vec[0]*g_vec[0] + g_vec[1]*g_vec[1] + g_vec[2]*g_vec[2]);
@@ -599,6 +699,7 @@ DLL_EXPORT int solve_rope_length(
     double* F_P1_out_n,
     double* F_P2_out_n,
     double* Length_initial,
+    double* Length_cat,
     double* Length_dynamic,
     double* Length_newton,
     int* Status_dynamic,
@@ -614,15 +715,17 @@ DLL_EXPORT int solve_rope_length(
     int dof = (n - 1) * 3;
     double *x = malloc(dof * sizeof(double));
     double *x_init = malloc(dof * sizeof(double));
+    double *x_cat = malloc((n - 2) * 3 * sizeof(double));
     double *x_relaxed = malloc(dof * sizeof(double));
     double *x_newton_3d = malloc(dof * sizeof(double));
     double *s0_init = malloc(n * sizeof(double));
+    double *s0_cat = malloc(n * sizeof(double));
     double *s0_init_scaled = malloc(n * sizeof(double));
     double *s0_post_init = malloc(n * sizeof(double));
     double *s0_post_relax = malloc(n * sizeof(double));
     double *s0_post_newton_3d = malloc(n * sizeof(double));
 
-    if (!x || !x_init || !x_relaxed || !x_newton_3d ||!s0_init || !s0_init_scaled ||
+    if (!x || !x_init || !x_cat || !x_relaxed || !x_newton_3d || !s0_init || !s0_cat || !s0_init_scaled ||
         !s0_post_init || !s0_post_relax || !s0_post_newton_3d ){
         free(x);free(x_relaxed);free(x_newton_3d);free(s0_init);free(s0_init_scaled);
         free(s0_post_init);free(s0_post_relax);free(s0_post_newton_3d);
@@ -633,6 +736,7 @@ DLL_EXPORT int solve_rope_length(
     double dx_line[3] = {P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]};
     double L_straight = sqrt(dx_line[0]*dx_line[0] + dx_line[1]*dx_line[1] + dx_line[2]*dx_line[2]);
     double L0 = L_straight * length_factor;
+
 /*    
     double Ar = 3.1415 * rope_diameter * rope_diameter / 4.0;
     double rope_volume = Ar * L0;
@@ -683,10 +787,52 @@ DLL_EXPORT int solve_rope_length(
     double m_scaled = m / scale_mass;
     double g_vec_scaled[3] = {g_vec[0] / scale_force, g_vec[1] / scale_force, g_vec[2] / scale_force};
     double c_scaled = c / scale_force;
+    double L0_scaled = L0 / scale_pos;
+
+    // --- Initialize rope with catenary ---
+
+    compute_catenary_initializer_3d(P1, P2, n, L0, g_vec, x_cat);
+
+    // Compute Catenary segment lengths
+    double s0_cat_sum = 0;
+    for (int i = 0; i < n; ++i) {
+        double xi[3], xi1[3];
+        if (i == 0) {
+            for (int j = 0; j < 3; ++j) {
+                xi[j]  = P1[j];
+                xi1[j] = x_cat[j];
+            }
+        } else if (i == n - 1) {
+            for (int j = 0; j < 3; ++j) {
+                xi[j]  = x_cat[(n - 2) * 3 + j];
+                xi1[j] = P2[j];
+            }
+        } else {
+            for (int j = 0; j < 3; ++j) {
+                xi[j]  = x_cat[(i - 1) * 3 + j];
+                xi1[j] = x_cat[i * 3 + j];
+            }
+        }
+        double dx[3] = {
+            xi1[0] - xi[0], xi1[1] - xi[1], xi1[2] - xi[2]
+        };
+        s0_cat[i] = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]);
+        s0_cat_sum += s0_cat[i];
+    } 
+    log_moreinfo("Positions initiated from catenary:\n");
+    for (int i = 0; i < n - 1; ++i) {
+        log_moreinfo("s0_cat %-3d : %-10.6f    ", i, s0_cat[i]);
+        log_moreinfo("Node %-3d: [%12.6f, %12.6f, %12.6f]\n", i + 1,
+            x_cat[i*3+0], x_cat[i*3+1], x_cat[i*3+2]);
+    }
+    log_moreinfo("s0_cat %d : %f    \n",n-1,s0_cat[n-1]);   
+    log_info("Catenary Length   = %f, Delta Length = %f]\n", s0_cat_sum, s0_cat_sum - L0);
+    *Length_cat = s0_cat_sum;
+
 
     // --- Initialize rope with sag ---
     double s0_post_init_sum = init_dynamic_relaxation(
-        x, P1_scaled, P2_scaled, n, g_vec_scaled, s0_post_init, L0, scale_pos);
+        x, P1_scaled, P2_scaled, n, g_vec_scaled, s0_post_init, L0_scaled, scale_pos);
 
     for (int i = 0; i < dof; ++i) {
         x_init[i] = x[i] * scale_pos;
@@ -808,7 +954,7 @@ DLL_EXPORT int solve_rope_length(
     log_moreinfo("Status Dynamc relaxation %d Status Newton %d\n",*Status_dynamic, *Status_newton);
 
     free(x); free(x_init); free(x_relaxed);
-    free(x_newton_3d); free(s0_init); free(s0_init_scaled); free(s0_post_init); free(s0_post_relax);
+    free(x_newton_3d); free(s0_init);free(x_cat); free(s0_cat); free(s0_init_scaled); free(s0_post_init); free(s0_post_relax);
     free(s0_post_newton_3d);
 
     if (*Status_dynamic != 0 || *Status_newton != 0) {

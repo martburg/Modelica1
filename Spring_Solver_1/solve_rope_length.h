@@ -84,11 +84,12 @@ DLL_EXPORT int solve_rope_length(
     double* F_P1_out_n,
     double* F_P2_out_n,
     double* Length_initial,
+    double* Length_cat,
     double* Length_dynamic,
     double* Length_newton,
     int* Status_dynamic,
     int* Status_newton,
-    int debug);
+    int debug_level);
 
 /**
  * @defgroup InternalSolverFunctions Internal Solver Functions
