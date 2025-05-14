@@ -87,7 +87,8 @@ DLL_EXPORT int solve_rope_length(
     double* Length_dynamic,
     double* Length_newton,
     int* Status_dynamic,
-    int* Status_newton);
+    int* Status_newton,
+    int debug);
 
 /**
  * @defgroup InternalSolverFunctions Internal Solver Functions
@@ -117,6 +118,7 @@ DLL_EXPORT int solve_rope_length(
  * @param[in] scale_pos        Position scaling factor
  * @return Total arc length of the initialized rope (scaled)
  */
+
 double init_dynamic_relaxation(
     double* x, const double* P1, const double* P2,
     int n, const double* g_vec,

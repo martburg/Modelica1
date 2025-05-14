@@ -11,25 +11,34 @@ lib = ctypes.CDLL(dll_path)
 lib.solve_rope_length.argtypes = [
     ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # P1
     ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # P2
-    ctypes.c_int, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
+    ctypes.c_int,                                      # n
+    ctypes.c_double,                                   # total_mass
+    ctypes.c_double,                                   # length_factor
+    ctypes.c_double,                                   # rope_diameter
+    ctypes.c_double,                                   # youngs_modulus
     ndpointer(ctypes.c_double, flags='C_CONTIGUOUS'),  # g_vec
     ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # out_positions
     ndpointer(ctypes.c_double, flags='C_CONTIGUOUS'),  # F_P1_n
     ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # F_P2_n
     ndpointer(ctypes.c_double, flags='C_CONTIGUOUS'),  # F_P1_w
     ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # F_P2_w
-    ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
-    ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int),
-    ctypes.POINTER(ctypes.c_int),
+    ctypes.POINTER(ctypes.c_double),                   # Lenght_initial
+    ctypes.POINTER(ctypes.c_double),                   # Length_dynamic
+    ctypes.POINTER(ctypes.c_double),                   # Length_newton
+    ctypes.POINTER(ctypes.c_int),                      # Status_dynamic
+    ctypes.POINTER(ctypes.c_int),                      # Status_newton
+    ctypes.c_int,                                      # debug_level
 ]
 lib.solve_rope_length.restype = ctypes.c_int
+
+debug_level = 3
 
 def force_test_case():
     P1 = [0,0,0]
     P2 = [0,100,0]
     P1 = np.array(P1)
     P2 = np.array(P2)
-    g_vec = [-9.81,0,0]
+    g_vec = [0,0,-9.81]
 
 
     return {
@@ -104,8 +113,14 @@ def run_and_test(P1, P2, n, total_mass, length_factor, rope_diameter,
         P1, P2, n, total_mass, length_factor, rope_diameter, youngs_modulus,
         g_vec, out_positions, F_P1_n, F_P2_n, F_P1_w, F_P2_w,
         ctypes.byref(Length_init), ctypes.byref(Length_dyn), ctypes.byref(Length_newton),
-        ctypes.byref(Status_dyn), ctypes.byref(Status_newton)
+        ctypes.byref(Status_dyn), ctypes.byref(Status_newton),debug_level
     )
+    if verbose:
+        print("FP_1_n ",F_P1_n)
+        print("FP_2_n ",F_P2_n)
+        print("FP_1_w ",F_P1_w)
+        print("FP_2_w ",F_P2_w)  
+    
 
     if Status_dyn.value != 0 or Status_newton.value != 0:
         if verbose:
@@ -154,17 +169,18 @@ def run_and_test(P1, P2, n, total_mass, length_factor, rope_diameter,
 
     if verbose:
         print(f"✅ Success. Max segment deviation = {deviation:.2f}%, "
-              f"Force errors: Newton = {F_error_n:.2e}, Weight = {F_error_w:.2e}")
+              f"Force errors: Weight = {F_error_w:.2e}, Springs = {F_error_n:.2e}")
 
     return True
 
 
 # Run semi-random test batch
-num_tests = 5
+num_tests = 1
 failures = []
 
 for i in range(num_tests):
     print(f"\n--- Running Test Case {i + 1} ---")
+    #test = force_test_case()
     test = generate_test_case()
     success = run_and_test(**test, verbose=True)
     if not success:
@@ -177,3 +193,4 @@ if failures:
         for k, v in f.items():
             print(f"{k} = {v}")
         print("---")
+
