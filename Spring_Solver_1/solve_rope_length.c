@@ -825,6 +825,76 @@ DLL_EXPORT int solve_rope_length(
     }
     return 0;
 }
+DLL_EXPORT int solve_rope_tension(
+    double* P1, double* P2,
+    int n, double total_mass,
+    double rope_diameter, double youngs_modulus,
+    double* g_vec, double F_target,
+    double* out_positions,
+    double* out_length_factor,
+    double* F_P1_out,
+    double* F_P2_out,
+    int* Status_dynamic,
+    int* Status_newton,
+    int debug_level)
+{
+    const double tol = 1e-3;
+    const int max_iter = 30;
+    double L_min = 1.01, L_max = 3.0;
+    double L_mid = 0.0;
+
+    double dx[3] = {P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]};
+    double L_straight = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]);
+    double best_force_error = 1e10;
+    double best_LF = L_min;
+
+    double dummy_F_P1_n[3], dummy_F_P2_n[3];
+    double dummy_F_P1_w[3], dummy_F_P2_w[3];
+    double Length_initial, Length_cat, Length_dynamic, Length_newton;
+
+    for (int i = 0; i < max_iter; ++i) {
+        L_mid = 0.5 * (L_min + L_max);
+        double length_factor = L_mid;
+
+        int status = solve_rope_length(
+            P1, P2,
+            n, total_mass, length_factor,
+            rope_diameter, youngs_modulus,
+            g_vec, out_positions,
+            dummy_F_P1_w, dummy_F_P2_w,
+            dummy_F_P1_n, dummy_F_P2_n,
+            &Length_initial, &Length_cat, &Length_dynamic, &Length_newton,
+            Status_dynamic, Status_newton,
+            debug_level);
+
+        if (status != 0) return status;
+
+        double force_mag = sqrt(dummy_F_P1_w[0]*dummy_F_P1_w[0] +
+                                dummy_F_P1_w[1]*dummy_F_P1_w[1] +
+                                dummy_F_P1_w[2]*dummy_F_P1_w[2]);
+        double error = force_mag - F_target;
+
+        if (fabs(error) < tol) {
+            *out_length_factor = length_factor;
+            memcpy(F_P1_out, dummy_F_P1_w, 3 * sizeof(double));
+            memcpy(F_P2_out, dummy_F_P2_w, 3 * sizeof(double));
+            return 0;
+        }
+
+        if (fabs(error) < best_force_error) {
+            best_force_error = fabs(error);
+            best_LF = length_factor;
+        }
+
+        if (error > 0)
+            L_max = L_mid;
+        else
+            L_min = L_mid;
+    }
+
+    *out_length_factor = best_LF;
+    return SOLVE_ERROR_LINE_SEARCH_FAILED;
+}
 
  
  

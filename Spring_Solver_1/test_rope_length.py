@@ -32,6 +32,79 @@ lib.solve_rope_length.argtypes = [
 ]
 lib.solve_rope_length.restype = ctypes.c_int
 
+# Define ctypes prototypes
+lib.solve_rope_tension.argtypes = [
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # P1
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # P2
+    ctypes.c_int,                                      # n
+    ctypes.c_double,                                   # total_mass
+    ctypes.c_double,                                   # rope_diameter
+    ctypes.c_double,                                   # youngs_modulus
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # g_vec
+    ctypes.c_double,                                   # F_target
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # out_positions
+    ctypes.POINTER(ctypes.c_double),                   # out_length_factor
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # F_P1_out
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # F_P2_out
+    ctypes.POINTER(ctypes.c_int),                      # Status_dynamic
+    ctypes.POINTER(ctypes.c_int),                      # Status_newton
+    ctypes.c_int                                        # debug_level
+]
+lib.solve_rope_tension.restype = ctypes.c_int
+
+def test_case_tension():
+    P1 = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+    P2 = np.array([0.0, 10.0, 0.0], dtype=np.float64)
+    n = 20
+    total_mass = 1.0
+    rope_diameter = 0.01
+    youngs_modulus = 1e9
+    g_vec = np.array([0.0, 0.0, -9.81], dtype=np.float64)
+    F_target = 5.0  # Newtons
+
+    return {
+        "P1": P1, "P2": P2,
+        "n": n, "total_mass": total_mass,
+        "rope_diameter": rope_diameter,
+        "youngs_modulus": youngs_modulus,
+        "g_vec": g_vec,
+        "F_target":F_target
+    }
+
+def run_and_test_tension(P1, P2, n, total_mass, rope_diameter,
+                 youngs_modulus, g_vec, F_target):
+
+    # === Outputs ===
+    out_positions = np.zeros((n - 1) * 3, dtype=np.float64)
+    out_length_factor = ctypes.c_double()
+    F_P1_out = np.zeros(3, dtype=np.float64)
+    F_P2_out = np.zeros(3, dtype=np.float64)
+    Status_dynamic = ctypes.c_int()
+    Status_newton = ctypes.c_int()
+
+    # === Call DLL Function ===
+    result = lib.solve_rope_tension(
+        P1, P2,
+        n, total_mass,
+        rope_diameter, youngs_modulus,
+        g_vec, F_target,
+        out_positions,
+        ctypes.byref(out_length_factor),
+        F_P1_out, F_P2_out,
+        ctypes.byref(Status_dynamic),
+        ctypes.byref(Status_newton),
+        3  # debug_level: 0–5
+    )
+
+    # === Output ===
+    print("Return code:", result)
+    print("Computed Length Factor:", out_length_factor.value)
+    print("Force at P1:", F_P1_out)
+    print("Force at P2:", F_P2_out)
+    print("Dynamic relaxation status:", Status_dynamic.value)
+    print("Newton solver status:", Status_newton.value)
+    print("Node Positions:\n", out_positions.reshape(-1, 3))
+
 def generate_weight_test():
 
     P1 =[0,0,0]
@@ -79,8 +152,7 @@ def generate_test_case():
         "g_vec": g_vec
     }
 
-
-def run_and_test(P1, P2, n, total_mass, length_factor, rope_diameter,
+def run_and_test_length(P1, P2, n, total_mass, length_factor, rope_diameter,
                  youngs_modulus, g_vec, tol_percent=2.5, force_tol=0.02, verbose=True):
     length_tol_percent = 2.5  # max allowed % difference between arc length reports
 
@@ -177,12 +249,15 @@ debug_level = 5
 
 for i in range(num_tests):
     print(f"\n--- Running Test Case {i + 1} ---")
-    test = generate_weight_test()
+    test = test_case_tension()
+    #test = generate_weight_test()
     #test = generate_test_case()
-    success, reason = run_and_test(**test, verbose=True)
-    if not success:
-        test["reason"] = reason
-        failures.append(test)
+    #run_and_test_length(**test)
+    run_and_test_tension(**test)
+    #success, reason = run_and_test_length(**test, verbose=True)
+    #if not success:
+    #    test["reason"] = reason
+    #    failures.append(test)
 
 # Summary
 print(f"\nSummary: {num_tests - len(failures)} passed / {num_tests} total.")
