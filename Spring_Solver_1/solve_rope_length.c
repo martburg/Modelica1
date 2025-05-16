@@ -812,7 +812,34 @@ DLL_EXPORT int solve_rope_length(
     log_info("||P1 F|| = %.6f\n",norm3(F_P1_out_w));
     log_info("||P2 F|| = %.6f\n",norm3(F_P2_out_w));
 
-    log_warn( "Delta F - m*g (Weights) = %.6e\n\n",Delta_F(total_mass, g_vec, F_P1_out_w, F_P2_out_w));   
+    log_warn( "Delta F - m*g (Weights) = %.6e\n\n",Delta_F(total_mass, g_vec, F_P1_out_w, F_P2_out_w)); 
+    
+    // --- Max sag log ---
+    double max_sag = -1.0;
+    int max_sag_idx = -1;
+    double sag_dir[3] = {P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]};
+    double sag_dir_len = norm3(sag_dir);
+    for (int i = 0; i < 3; ++i) sag_dir[i] /= sag_dir_len;
+
+    for (int i = 0; i < n - 1; ++i) {
+        double* xi = &x_newton_3d[i * 3];
+        double t;
+        double proj[3];
+        double dx[3] = {xi[0] - P1[0], xi[1] - P1[1], xi[2] - P1[2]};
+        t = vec3_dot(dx, sag_dir);
+        for (int j = 0; j < 3; ++j) proj[j] = P1[j] + t * sag_dir[j];
+        double d[3] = {xi[0] - proj[0], xi[1] - proj[1], xi[2] - proj[2]};
+        double dist = norm3(d);
+        if (dist > max_sag) {
+            max_sag = dist;
+            max_sag_idx = i;
+        }
+    }
+    log_info("Max sag at node %d: sag = %.6f, position = [%.6f, %.6f, %.6f]\n",
+        max_sag_idx + 1, max_sag,
+        x_newton_3d[max_sag_idx * 3 + 0],
+        x_newton_3d[max_sag_idx * 3 + 1],
+        x_newton_3d[max_sag_idx * 3 + 2]);
 
     log_moreinfo("Status Dynamc relaxation %d Status Newton %d\n",*Status_dynamic, *Status_newton);
 

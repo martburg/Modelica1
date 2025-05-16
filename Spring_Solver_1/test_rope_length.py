@@ -1,8 +1,11 @@
 import ctypes
 import numpy as np
 from numpy.ctypeslib import ndpointer
+import matplotlib.pyplot as plt
+from matplotlib import cm
+from mpl_toolkits.mplot3d import Axes3D
 
-np.random.seed(42)  # Fixed seed for reproducibility
+
 
 # Load DLL
 dll_path = './Resources/Library/solve_rope_length_lapak.dll'
@@ -54,13 +57,13 @@ lib.solve_rope_tension.restype = ctypes.c_int
 
 def test_case_tension():
     P1 = np.array([0.0, 0.0, 0.0], dtype=np.float64)
-    P2 = np.array([0.0, 10.0, 0.0], dtype=np.float64)
+    P2 = np.array([0.0, 70.0, 0.0], dtype=np.float64)
     n = 20
     total_mass = 1.0
     rope_diameter = 0.01
     youngs_modulus = 1e9
     g_vec = np.array([0.0, 0.0, -9.81], dtype=np.float64)
-    F_target = 5.0  # Newtons
+    F_target = 50.0  # Newtons
 
     return {
         "P1": P1, "P2": P2,
@@ -108,10 +111,10 @@ def run_and_test_tension(P1, P2, n, total_mass, rope_diameter,
 def generate_weight_test():
 
     P1 =[0,0,0]
-    P2 =[0,70,0]
+    P2 =[70,0,0]
     n = 20
-    total_mass = 1
-    length_factor = 1.3
+    total_mass = 5
+    length_factor = 1.6
     rope_diameter = 0.01
     youngs_modulus = 1e9
     g_vec = [0,0,-9.81]
@@ -184,7 +187,7 @@ def run_and_test_length(P1, P2, n, total_mass, length_factor, rope_diameter,
         reason = f"Solver failed: Status_Dynamic={Status_dyn.value}, Status_Newton={Status_newton.value}"
         if verbose:
             print(f"❌ {reason}")
-        return False, reason
+        return False, reason, out_positions
 
     # Check arc length consistency
     lengths = [Length_init.value, Length_dyn.value, Length_newton.value]
@@ -196,7 +199,7 @@ def run_and_test_length(P1, P2, n, total_mass, length_factor, rope_diameter,
                   f"(max deviation: {max_dev:.2f}%)")
         if verbose:
             print(f"❌ {reason}")
-        return False, reason
+        return False, reason, out_positions
 
     # Segment length deviation check
     points = np.vstack([P1, out_positions.reshape(-1, 3), P2])
@@ -206,7 +209,7 @@ def run_and_test_length(P1, P2, n, total_mass, length_factor, rope_diameter,
         reason = f"Length deviation too high: {deviation:.2f}%"
         if verbose:
             print(f"❌ {reason}")
-        return False, reason
+        return False, reason, out_positions
 
     # Gravity-aligned force comparison
     g_norm = np.linalg.norm(g_vec)
@@ -235,29 +238,122 @@ def run_and_test_length(P1, P2, n, total_mass, length_factor, rope_diameter,
                   f"(error: {F_error_w:.2e} N)")
         if verbose:
             print(f"❌ {reason}")
-        return False, reason
+        return False, reason, out_positions
 
     if verbose:
         print(f"✅ Success. Max segment deviation = {deviation:.2f}%, "
               f"Force errors: Weight = {F_error_w:.2e}, Springs = {F_error_n:.2e}")
-    return True, ""
+    return True, "", out_positions
+
+def plot_rope_colored(P1, P2, positions, g_vec=np.array([0, 0, -1])):
+    P1 = np.asarray(P1)
+    P2 = np.asarray(P2)
+    g_vec = np.asarray(g_vec)
+    nodes = np.vstack([P1, positions.reshape(-1, 3), P2])
+
+    # --- Define gravity-aligned rotation matrix ---
+    def get_gravity_aligned_rotation(P1, P2, g_vec):
+        z_unit = -g_vec / np.linalg.norm(g_vec)
+        x_raw = P2 - P1
+        x_unit = x_raw / np.linalg.norm(x_raw)
+
+        # Make x_unit orthogonal to z_unit
+        x_unit = x_unit - np.dot(x_unit, z_unit) * z_unit
+        x_unit /= np.linalg.norm(x_unit)
+
+        y_unit = np.cross(z_unit, x_unit)
+        y_unit /= np.linalg.norm(y_unit)
+
+        R = np.column_stack([x_unit, y_unit, z_unit])
+        return R
+
+    # --- Apply rotation to align gravity with Z′ ---
+    R = get_gravity_aligned_rotation(P1, P2, g_vec)
+    nodes_rot = (R.T @ nodes.T).T  # Apply active rotation
+
+    # === Print transformed positions ===
+    print("\n[INFO] Transformed (gravity-aligned) node positions:")
+    for i, pt in enumerate(nodes_rot):
+        print(f"Node {i:2d}: [{pt[0]: .3f}, {pt[1]: .3f}, {pt[2]: .3f}]")
+
+    # === Check planarity ===
+    y_dev = np.std(nodes_rot[:, 1])
+    print(f"[DEBUG] Std deviation in rotated Y (should be near 0): {y_dev:.6f}")
+
+    # === Stretch coloring ===
+    lengths = np.linalg.norm(np.diff(nodes_rot, axis=0), axis=1)
+    mean_len = np.mean(lengths)
+    stretch = (lengths - mean_len) / mean_len
+    norm = plt.Normalize(vmin=np.min(stretch), vmax=np.max(stretch))
+    colors = cm.viridis(norm(stretch))
+
+    # === Plot ===
+    fig = plt.figure(figsize=(10, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    for i in range(len(nodes_rot) - 1):
+        seg = np.vstack([nodes_rot[i], nodes_rot[i + 1]])
+        ax.plot(seg[:, 0], seg[:, 1], seg[:, 2], color=colors[i])
+
+    # Show original straight rope (rotated)
+    ref_line = np.vstack([P1, P2]) @ R
+    ax.plot(ref_line[:, 0], ref_line[:, 1], ref_line[:, 2], '--', color='gray', label='Straight Line')
+
+    ax.set_xlabel("X′ (rope span)")
+    ax.set_ylabel("Y′ (planarity deviation)")
+    ax.set_zlabel("Z′ (aligned with gravity ↓)")
+    ax.set_title('Rope with Gravity-Aligned Z′ Axis and Stretch Coloring')
+
+    mappable = cm.ScalarMappable(cmap='viridis', norm=norm)
+    mappable.set_array([])
+    cbar = fig.colorbar(mappable, ax=ax, shrink=0.6)
+    cbar.set_label('Relative Stretch')
+    ax.legend()
+    plt.tight_layout()
+    plt.pause(0.1)
+
+    plt.show()
+
+
 
 # Run semi-random test batch
-num_tests = 1
+np.random.seed(42)  # Fixed seed for reproducibility
+num_tests = 10
 failures = []
-debug_level = 5
+debug_level = 3
+#debug_mode = 0  # no debug
+#debug_mode = 1  #weight case
+#debug_mode = 2  #length test silent
+debug_mode = 3  #length test with plot
+#debug_mode = 4  #tension test 
+#debug_mode = 3  #length test with plot
 
 for i in range(num_tests):
     print(f"\n--- Running Test Case {i + 1} ---")
-    test = test_case_tension()
-    #test = generate_weight_test()
-    #test = generate_test_case()
-    #run_and_test_length(**test)
-    run_and_test_tension(**test)
-    #success, reason = run_and_test_length(**test, verbose=True)
-    #if not success:
-    #    test["reason"] = reason
-    #    failures.append(test)
+    if debug_mode == 0:
+        debug_level = 0
+    elif debug_mode == 1:
+        test = generate_weight_test()
+        success, reason, positions = run_and_test_length(**test, verbose=True)
+        if not success:
+            test["reason"] = reason
+            failures.append(test)
+    elif debug_mode == 2:
+        test = generate_test_case()
+        success, reason, positions = run_and_test_length(**test, verbose=True)
+        if not success:
+            test["reason"] = reason
+            failures.append(test)
+    elif debug_mode == 3:
+        test = generate_test_case()
+        success, reason, positions = run_and_test_length(**test, verbose=True)
+        #### inset plot code 
+        if not success:
+            test["reason"] = reason
+            test["positions"] = positions.copy()
+            failures.append(test)        #        
+    elif debug_mode == 4:
+        test = test_case_tension()
+        run_and_test_tension()
 
 # Summary
 print(f"\nSummary: {num_tests - len(failures)} passed / {num_tests} total.")
@@ -265,7 +361,10 @@ if failures:
     print("\nFailed test inputs:")
     for f in failures:
         for k, v in f.items():
-            if k != "reason":
+            if k not in ("reason", "positions"):
                 print(f"{k} = {v}")
         print("Reason:", f["reason"])
         print("---")
+    for f in failures:
+        if "positions" in f:
+            plot_rope_colored(np.array(f["P1"]), np.array(f["P2"]), f["positions"])
