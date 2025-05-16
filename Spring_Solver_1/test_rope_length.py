@@ -275,13 +275,13 @@ def run_and_test_length(P1, P2, n, total_mass, length_factor, rope_diameter,
               f"Force errors: Weight = {F_error_w:.2e}, Springs = {F_error_n:.2e}{extra}")
     return True, "", out_positions, Status_dyn.value, Status_newton.value
 
-def plot_rope_3d_with_gravity_enhanced(P1, P2, x, g_vec,
-                                               total_mass=None, length_factor=None,
-                                               rope_diameter=None, youngs_modulus=None,
-                                               status_tuple=None):
+def plot_rope_2d(P1, P2, x, g_vec,
+                                                     total_mass=None, length_factor=None,
+                                                     rope_diameter=None, youngs_modulus=None,
+                                                     status_tuple=None, fail_reason=None):
     """
-    2D rope plot with diagnostic legend including planarity error, sag depth, and span-to-sag ratio.
-    Rope is projected into the gravity-aligned plane. Small nodes and segment coloring are used.
+    2D rope plot with diagnostics and failure reason shown in the subtitle (title second line).
+    Includes sag, span-to-sag ratio, planarity error, and segment coloring.
     """
     import numpy as np
     import matplotlib.pyplot as plt
@@ -300,7 +300,7 @@ def plot_rope_3d_with_gravity_enhanced(P1, P2, x, g_vec,
         success = all(s == 0 for s in status_tuple)
         print("Success" if success else "Solver failed")
 
-    # Construct local gravity-aligned frame
+    # Frame setup
     ez = g_vec / g_mag
     ex = P2 - P1
     ex -= np.dot(ex, ez) * ez
@@ -308,13 +308,11 @@ def plot_rope_3d_with_gravity_enhanced(P1, P2, x, g_vec,
     ey = np.cross(ez, ex)
     R = np.vstack([ex, ey, ez])
 
-    # Transform
     x_rel = x - x[0]
     x_proj = x_rel @ R.T
     x2d = x_proj[:, [0, 2]]
-    x2d[:, 1] *= -1  # flip sag direction
+    x2d[:, 1] *= -1
 
-    # Segment statistics
     seg_lengths = np.linalg.norm(np.diff(x, axis=0), axis=1)
     arc_length = np.sum(seg_lengths)
     cord_length = np.linalg.norm(P2 - P1)
@@ -322,12 +320,10 @@ def plot_rope_3d_with_gravity_enhanced(P1, P2, x, g_vec,
     volume = area * (cord_length * length_factor) if area and length_factor else None
     density = total_mass / volume if volume else None
 
-    # Sag and span
     all_nodes = np.vstack([P1, x, P2])
-    sag = np.max(all_nodes[:, 2]) - np.min(all_nodes[:, 2])  # in world Z
+    sag = np.max(all_nodes[:, 2]) - np.min(all_nodes[:, 2])
     span_to_sag = cord_length / sag if sag > 1e-6 else float('inf')
 
-    # Planarity error
     u = (P2 - P1) / np.linalg.norm(P2 - P1)
     g_proj = g_vec - np.dot(g_vec, u) * u
     if np.linalg.norm(g_proj) < 1e-8:
@@ -348,7 +344,10 @@ def plot_rope_3d_with_gravity_enhanced(P1, P2, x, g_vec,
     ax2d.add_collection(lc)
     ax2d.scatter(*x2d.T, c="k", s=2, zorder=3)
 
-    ax2d.set_title("Rope Projection into Gravity-Aligned Plane")
+    title = "Rope Projection into Gravity-Aligned Plane"
+    subtitle = f"Reason: {fail_reason}" if fail_reason else None
+    ax2d.set_title(f"{title}\n{subtitle}" if subtitle else title)
+
     ax2d.set_xlabel("Horizontal along rope")
     ax2d.set_ylabel("Vertical (gravity down)")
     ax2d.axis('equal')
@@ -357,35 +356,35 @@ def plot_rope_3d_with_gravity_enhanced(P1, P2, x, g_vec,
     sm.set_array([])
     cbar = plt.colorbar(sm, ax=ax2d, orientation='vertical', pad=0.02)
     cbar.set_label("Segment Length [m]")
+    def small_patch(label):
+            return Patch(facecolor='none', edgecolor='k', label=label, linewidth=0.5)
 
     # Legend
     legend_elements = []
     if total_mass is not None:
-        legend_elements.append(Patch(facecolor='none', edgecolor='k', label=f"Mass: {total_mass:.2f} kg"))
+        legend_elements.append(small_patch(f"Mass: {total_mass:.2f} kg"))
     if density:
-        legend_elements.append(Patch(facecolor='none', edgecolor='k', label=f"Density: {density:.1f} kg/m³"))
+        legend_elements.append(small_patch(f"Density: {density:.1f} kg/m³"))
     if length_factor:
-        legend_elements.append(Patch(facecolor='none', edgecolor='k', label=f"Length Factor: {length_factor:.4f}"))
-    legend_elements.append(Patch(facecolor='none', edgecolor='k', label=f"Arc Length: {arc_length:.3f} m"))
-    legend_elements.append(Patch(facecolor='none', edgecolor='k', label=f"Cord Length: {cord_length:.3f} m"))
-    legend_elements.append(Patch(facecolor='none', edgecolor='k', label=f"Span-to-Sag Ratio: {span_to_sag:.2f}"))
-    legend_elements.append(Patch(facecolor='none', edgecolor='k', label=f"Sag Depth: {sag:.3f} m"))
+        legend_elements.append(small_patch(f"Length Factor: {length_factor:.4f}"))
+    legend_elements.append(small_patch(f"Arc Length: {arc_length:.3f} m"))
+    legend_elements.append(small_patch(f"Cord Length: {cord_length:.3f} m"))
+    legend_elements.append(small_patch(f"Span-to-Sag Ratio: {span_to_sag:.2f}"))
+    legend_elements.append(small_patch(f"Sag Depth: {sag:.3f} m"))
     if rope_diameter:
-        legend_elements.append(Patch(facecolor='none', edgecolor='k', label=f"Diameter: {rope_diameter*1000:.3f} mm"))
+        legend_elements.append(small_patch(f"Diameter: {rope_diameter*1000:.3f} mm"))
     if youngs_modulus:
-        legend_elements.append(Patch(facecolor='none', edgecolor='k', label=f"Young's Modulus: {youngs_modulus/1e9:.3f} GPa"))
-    legend_elements.append(Patch(facecolor='none', edgecolor='k', label=f"Gravity Magnitude: {g_mag:.2f} m/s²"))
+        legend_elements.append(small_patch(f"Young's Modulus: {youngs_modulus/1e9:.3f} GPa"))
+    legend_elements.append(small_patch(f"Gravity Magnitude: {g_mag:.2f} m/s²"))
     if planarity_error is not None:
-        legend_elements.append(Patch(facecolor='none', edgecolor='k', label=f"Planarity Error: {planarity_error:.2e} m"))
-    legend_elements.append(Patch(facecolor='none', edgecolor='k', label=f"Nodes: {n}"))
+        legend_elements.append(small_patch(f"Planarity Error: {planarity_error:.2e} m"))
+    legend_elements.append(small_patch(f"Nodes: {n}"))
     if status_tuple:
-        legend_elements.append(Patch(facecolor='none', edgecolor='k',
-                                     label=f"Status: dyn={status_tuple[0]}, newton={status_tuple[1]}"))
+        legend_elements.append(small_patch(f"Status: dyn={status_tuple[0]}, newton={status_tuple[1]}"))
 
-    ax2d.legend(handles=legend_elements, loc='lower left', frameon=True)
+    ax2d.legend(handles=legend_elements, loc='lower left', frameon=True, handlelength=1.0, borderpad=0.5, labelspacing=0.3)
     plt.tight_layout()
     plt.show()
-
 def set_view_normal_to_plane(ax, normal_vec):
     import numpy as np
 
@@ -458,12 +457,13 @@ if failures:
         print("---")
 for f in failures:
     if "positions" in f:
-        plot_rope_3d_with_gravity_enhanced(
+        plot_rope_2d(
             f["P1"], f["P2"], f["positions"],
             g_vec=np.array(f["g_vec"]),
             total_mass=f.get("total_mass"),
             length_factor=f.get("length_factor"),
             rope_diameter=f.get("rope_diameter"),
             youngs_modulus=f.get("youngs_modulus"),
-            status_tuple=(f.get("status_dyn", -99), f.get("status_newton", -99), -6)
+            status_tuple=(f.get("status_dyn", -99), f.get("status_newton", -99)),
+            fail_reason=f.get("reason", "")
         )
