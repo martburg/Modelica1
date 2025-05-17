@@ -43,6 +43,9 @@ static int CURRENT_LOG_LEVEL = LOG_NONE;  // Default: silent
 #define TOL_CAT 1e-8
 #define SIGN(x) ((x) >= 0 ? 1 : -1)
 
+#define MAX_ITER_ARC 100
+#define TOL_ARC 1e-8
+
 extern void dgesv_(int* N, int* NRHS, double* A, int* LDA,
     int* IPIV, double* B, int* LDB, int* INFO);
 
@@ -852,6 +855,7 @@ DLL_EXPORT int solve_rope_length(
     }
     return 0;
 }
+
 DLL_EXPORT int solve_rope_tension(
     double* P1, double* P2,
     int n, double total_mass,
@@ -872,12 +876,21 @@ DLL_EXPORT int solve_rope_tension(
 
     double dx[3] = {P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]};
     double L_straight = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]);
+
     double best_force_error = 1e10;
     double best_LF = L_min;
 
     double dummy_F_P1_n[3], dummy_F_P2_n[3];
     double dummy_F_P1_w[3], dummy_F_P2_w[3];
+    double best_F_P1[3], best_F_P2[3];
     double Length_initial, Length_cat, Length_dynamic, Length_newton;
+
+    double* temp_positions = malloc((n - 1) * 3 * sizeof(double));
+    double* best_positions = malloc((n - 1) * 3 * sizeof(double));
+    if (!temp_positions || !best_positions) {
+        free(temp_positions); free(best_positions);
+        return -1;
+    }
 
     for (int i = 0; i < max_iter; ++i) {
         L_mid = 0.5 * (L_min + L_max);
@@ -887,30 +900,42 @@ DLL_EXPORT int solve_rope_tension(
             P1, P2,
             n, total_mass, length_factor,
             rope_diameter, youngs_modulus,
-            g_vec, out_positions,
+            g_vec, temp_positions,
             dummy_F_P1_w, dummy_F_P2_w,
             dummy_F_P1_n, dummy_F_P2_n,
             &Length_initial, &Length_cat, &Length_dynamic, &Length_newton,
             Status_dynamic, Status_newton,
             debug_level);
 
-        if (status != 0) return status;
+        if (status != 0) {
+            free(temp_positions);
+            free(best_positions);
+            return status;
+        }
 
-        double force_mag = sqrt(dummy_F_P1_w[0]*dummy_F_P1_w[0] +
-                                dummy_F_P1_w[1]*dummy_F_P1_w[1] +
-                                dummy_F_P1_w[2]*dummy_F_P1_w[2]);
+        double force_mag = sqrt(
+            dummy_F_P1_w[0]*dummy_F_P1_w[0] +
+            dummy_F_P1_w[1]*dummy_F_P1_w[1] +
+            dummy_F_P1_w[2]*dummy_F_P1_w[2]);
+
         double error = force_mag - F_target;
 
         if (fabs(error) < tol) {
             *out_length_factor = length_factor;
+            memcpy(out_positions, temp_positions, (n - 1) * 3 * sizeof(double));
             memcpy(F_P1_out, dummy_F_P1_w, 3 * sizeof(double));
             memcpy(F_P2_out, dummy_F_P2_w, 3 * sizeof(double));
+            free(temp_positions);
+            free(best_positions);
             return 0;
         }
 
         if (fabs(error) < best_force_error) {
             best_force_error = fabs(error);
             best_LF = length_factor;
+            memcpy(best_positions, temp_positions, (n - 1) * 3 * sizeof(double));
+            memcpy(best_F_P1, dummy_F_P1_w, 3 * sizeof(double));
+            memcpy(best_F_P2, dummy_F_P2_w, 3 * sizeof(double));
         }
 
         if (error > 0)
@@ -919,9 +944,229 @@ DLL_EXPORT int solve_rope_tension(
             L_min = L_mid;
     }
 
+    // Line search failed, return best approximation found
     *out_length_factor = best_LF;
+    memcpy(out_positions, best_positions, (n - 1) * 3 * sizeof(double));
+    memcpy(F_P1_out, best_F_P1, 3 * sizeof(double));
+    memcpy(F_P2_out, best_F_P2, 3 * sizeof(double));
+
+    free(temp_positions);
+    free(best_positions);
     return SOLVE_ERROR_LINE_SEARCH_FAILED;
 }
 
- 
- 
+void compute_jacobian_arc(
+    double* J_out, const double* x, const double* P1, const double* P2,
+    const double* s0, int n, double k, double m, const double* g, double lambda)
+{
+    int N = 3 * (n - 2); // Degrees of freedom for internal nodes
+    memset(J_out, 0, sizeof(double) * N * N);
+
+    for (int i = 0; i < n - 2; ++i) {
+        const double* xi = &x[i * 3];
+
+        const double* x_left  = (i == 0)     ? P1 : &x[(i - 1) * 3];
+        const double* x_right = (i == n - 3) ? P2 : &x[(i + 1) * 3];
+
+        double dL[3], dR[3];
+        for (int j = 0; j < 3; ++j) {
+            dL[j] = xi[j] - x_left[j];
+            dR[j] = xi[j] - x_right[j];
+        }
+
+        double lL = sqrt(dL[0]*dL[0] + dL[1]*dL[1] + dL[2]*dL[2]);
+        double lR = sqrt(dR[0]*dR[0] + dR[1]*dR[1] + dR[2]*dR[2]);
+
+        double sL = lambda * s0[i];
+        double sR = lambda * s0[i + 1];
+
+        double coeffL1 = -k * (1.0 - sL / lL);
+        double coeffL2 = -k * sL / (lL * lL * lL);
+
+        double coeffR1 = -k * (1.0 - sR / lR);
+        double coeffR2 = -k * sR / (lR * lR * lR);
+
+        double blockL[9], blockR[9];
+
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c) {
+                double I = (r == c) ? 1.0 : 0.0;
+                blockL[r * 3 + c] = coeffL1 * I + coeffL2 * dL[r] * dL[c];
+                blockR[r * 3 + c] = coeffR1 * I + coeffR2 * dR[r] * dR[c];
+            }
+        }
+
+        int row = i * 3;
+
+        // Diagonal block
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c) {
+                J_out[(row + r) * N + (row + c)] += blockL[r * 3 + c] + blockR[r * 3 + c];
+            }
+        }
+
+        // Off-diagonal: left neighbor
+        if (i > 0) {
+            int colL = (i - 1) * 3;
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 3; ++c) {
+                    J_out[(row + r) * N + (colL + c)] -= blockL[r * 3 + c];
+                }
+            }
+        }
+
+        // Off-diagonal: right neighbor
+        if (i < n - 3) {
+            int colR = (i + 1) * 3;
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 3; ++c) {
+                    J_out[(row + r) * N + (colR + c)] -= blockR[r * 3 + c];
+                }
+            }
+        }
+    }
+}
+
+void initialize_positions(
+    double* x,
+    const double* P1,
+    const double* P2,
+    int n)
+{
+    for (int i = 1; i < n - 1; ++i) {
+        double t = (double)i / (n - 1);
+        for (int j = 0; j < 3; ++j) {
+            x[(i - 1) * 3 + j] = (1.0 - t) * P1[j] + t * P2[j];
+        }
+    }
+}
+
+static void compute_residuals_arc(
+    double* residuals_out, const double* x, const double* P1,
+    const double* P2, const double* s0,int n, double k, double m,
+    const double* g_vec, double lambda)
+{
+    for (int i = 0; i < n - 2; ++i) {
+        const double* xi = &x[i * 3];
+        const double* x_left  = (i == 0)     ? P1         : &x[(i - 1) * 3];
+        const double* x_right = (i == n - 3) ? P2         : &x[(i + 1) * 3];
+
+        double dL[3], dR[3];
+        for (int j = 0; j < 3; ++j) {
+            dL[j] = xi[j] - x_left[j];
+            dR[j] = xi[j] - x_right[j];
+        }
+        double lL = sqrt(dL[0]*dL[0] + dL[1]*dL[1] + dL[2]*dL[2]);
+        double lR = sqrt(dR[0]*dR[0] + dR[1]*dR[1] + dR[2]*dR[2]);
+        double sL = lambda * s0[i];
+        double sR = lambda * s0[i + 1];
+
+        for (int j = 0; j < 3; ++j) {
+            double FL = -k * (lL - sL) / (lL + 1e-12) * dL[j];
+            double FR = -k * (lR - sR) / (lR + 1e-12) * dR[j];
+            residuals_out[i * 3 + j] = FL + FR + m * g_vec[j];
+        }
+    }
+}
+
+static void compute_residuals_augmented(const double* x, double lambda,
+    const double* x0, const double* s0, const double* P1, const double* P2,
+    int n, double k, double m, const double* g, double* R_aug) {
+    int N = 3*(n-2);
+    double R[N];
+    compute_residuals_arc(R, x, P1, P2, s0, n, k, m, g, lambda);
+    for (int i = 0; i < N; ++i) R_aug[i] = R[i];
+    double arc = 0;
+    for (int i = 0; i < N; ++i) {
+        double dx = x[i] - x0[i];
+        arc += dx * dx;
+    }
+    R_aug[N] = arc - TOL_ARC * TOL_ARC;
+}
+
+static void compute_jacobian_augmented(const double* x, double lambda,
+    const double* x0, const double* s0, const double* P1, const double* P2,
+    int n, double k, double m, const double* g, double* J_aug) {
+    int N = 3*(n-2);
+    double* J = (double*)malloc(sizeof(double) * N * N);
+    compute_jacobian_arc(J, x, P1, P2, s0, n, k, m, g, lambda);
+    for (int i = 0; i < N; ++i)
+        for (int j = 0; j < N; ++j)
+            J_aug[i*(N+1) + j] = J[i*N + j];
+    for (int j = 0; j < N; ++j) {
+        J_aug[N*(N+1) + j] = 2.0 * (x[j] - x0[j]);
+        J_aug[j*(N+1) + N] = 0.0;
+    }
+    J_aug[(N+1)*(N+1)-1] = 0.0;
+    free(J);
+}
+
+int newton_augmented(double* x, double* lambda_out,
+    const double* x0, const double* s0,
+    const double* P1, const double* P2,
+     int n, double k, double m, const double* g) {
+    int N = 3*(n-2);
+    double lambda = *lambda_out;
+    double* R_aug = (double*)malloc(sizeof(double) * (N+1));
+    double* J_aug = (double*)malloc(sizeof(double) * (N+1)*(N+1));
+    double* dx_aug = (double*)malloc(sizeof(double) * (N+1));
+
+    for (int iter = 0; iter < MAX_ITER_ARC; ++iter) {
+        compute_residuals_augmented(x, lambda, x0, s0, P1, P2, n, k, m, g, R_aug);
+        compute_jacobian_augmented(x, lambda, x0, s0, P1, P2, n, k, m, g, J_aug);
+        int Nsys = N + 1;
+        int* ipiv = (int*)malloc(sizeof(int) * Nsys);
+        int info;
+        for (int i = 0; i < Nsys; ++i) dx_aug[i] = -R_aug[i];
+        dgesv_(&Nsys, &(int){1}, J_aug, &Nsys, ipiv, dx_aug, &Nsys, &info);
+        if (info != 0) {
+            free(R_aug); free(J_aug); free(dx_aug); free(ipiv);
+            return -1;
+        }
+        for (int i = 0; i < N; ++i) x[i] += dx_aug[i];
+        lambda += dx_aug[N];
+        double res_norm = 0;
+        for (int i = 0; i < N; ++i) res_norm += R_aug[i]*R_aug[i];
+        res_norm = sqrt(res_norm);
+        if (res_norm < TOL_ARC) {
+            *lambda_out = lambda;
+            free(R_aug); free(J_aug); free(dx_aug); free(ipiv);
+            return 0;
+        }
+        free(ipiv);
+    }
+    free(R_aug); free(J_aug); free(dx_aug);
+    return -2;
+}
+
+DLL_EXPORT int solve_rope_arc_length(
+    const double* P1, const double* P2, int n,
+    double total_mass, double length_factor_init,
+    double rope_diameter, double youngs_modulus,
+    const double* g_vec,
+    double* s0,
+    double* out_positions,
+    double* out_length_factor)
+{
+    double k = youngs_modulus * rope_diameter * rope_diameter * M_PI / 4.0;
+    double m = total_mass / (n - 1);
+
+    double* x0 = (double*)malloc(sizeof(double) * 3 * (n - 2));
+    double* x  = (double*)malloc(sizeof(double) * 3 * (n - 2));
+
+    initialize_positions(x, P1, P2, n);
+    memcpy(x0, x, sizeof(double) * 3 * (n - 2));
+
+    double lambda = length_factor_init;
+    int status = newton_augmented(x, &lambda, x0, s0, P1, P2, n, k, m, g_vec);
+
+    memcpy(&out_positions[0], P1, sizeof(double) * 3);
+    for (int i = 0; i < 3 * (n - 2); ++i)
+        out_positions[i + 3] = x[i];
+    memcpy(&out_positions[3 * (n - 1)], P2, sizeof(double) * 3);
+
+    *out_length_factor = lambda;
+    free(x); free(x0);
+    return status;
+}
+

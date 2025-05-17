@@ -13,7 +13,7 @@ from matplotlib.patches import Patch
 
 
 # Load DLL
-dll_path = './Resources/Library/solve_rope_length_lapak.so'
+dll_path = './Resources/Library/solve_rope_length_lapak.dll'
 lib = ctypes.CDLL(dll_path)
 
 lib.solve_rope_length.argtypes = [
@@ -80,7 +80,15 @@ def test_case_tension():
     }
 
 def run_and_test_tension(P1, P2, n, total_mass, rope_diameter,
-                 youngs_modulus, g_vec, F_target):
+                         youngs_modulus, g_vec, F_target,
+                         force_tol=0.02, tol_percent=2.5, verbose=True, debug_level=3):
+    """
+    Executes solve_rope_tension and evaluates its correctness.
+    Checks: return code, force error, planarity.
+    """
+    P1 = np.asarray(P1, dtype=np.float64)
+    P2 = np.asarray(P2, dtype=np.float64)
+    g_vec = np.asarray(g_vec, dtype=np.float64)
 
     # === Outputs ===
     out_positions = np.zeros((n - 1) * 3, dtype=np.float64)
@@ -90,10 +98,9 @@ def run_and_test_tension(P1, P2, n, total_mass, rope_diameter,
     Status_dynamic = ctypes.c_int()
     Status_newton = ctypes.c_int()
 
-    # === Call DLL Function ===
+    # === DLL Call ===
     result = lib.solve_rope_tension(
-        P1, P2,
-        n, total_mass,
+        P1, P2, n, total_mass,
         rope_diameter, youngs_modulus,
         g_vec, F_target,
         out_positions,
@@ -101,17 +108,60 @@ def run_and_test_tension(P1, P2, n, total_mass, rope_diameter,
         F_P1_out, F_P2_out,
         ctypes.byref(Status_dynamic),
         ctypes.byref(Status_newton),
-        3  # debug_level: 0–5
+        debug_level
     )
 
-    # === Output ===
-    print("Return code:", result)
-    print("Computed Length Factor:", out_length_factor.value)
-    print("Force at P1:", F_P1_out)
-    print("Force at P2:", F_P2_out)
-    print("Dynamic relaxation status:", Status_dynamic.value)
-    print("Newton solver status:", Status_newton.value)
-    print("Node Positions:\n", out_positions.reshape(-1, 3))
+    # === Early failure check ===
+    if result != 0 or Status_dynamic.value != 0 or Status_newton.value != 0:
+        reason = f"Solver failed: ret={result}, dyn={Status_dynamic.value}, newton={Status_newton.value}"
+        if verbose:
+            print(f"❌ {reason}")
+        return False, reason, out_positions, Status_dynamic.value, Status_newton.value
+
+    # === Force check ===
+    F_proj = np.dot(F_P1_out, g_vec) / np.linalg.norm(g_vec)
+    error_force = abs(F_proj - F_target)
+    allowed_error = force_tol * F_target
+
+    if error_force > allowed_error:
+        reason = (f"Force mismatch: projected P1 = {F_proj:.2f} N, "
+                  f"expected = {F_target:.2f} N (error = {error_force:.2e} N)")
+        if verbose:
+            print(f"❌ {reason}")
+        return False, reason, out_positions, Status_dynamic.value, Status_newton.value
+
+    # === Planarity check ===
+    cord_vec = P2 - P1
+    cord_vec /= np.linalg.norm(cord_vec)
+    g_proj = g_vec - np.dot(g_vec, cord_vec) * cord_vec
+
+    if np.linalg.norm(g_proj) < 1e-8:
+        planarity_error = None
+        if verbose:
+            print("⚠️ Skipping planarity check (g ‖ cord).")
+    else:
+        plane_normal = np.cross(cord_vec, g_proj)
+        plane_normal /= np.linalg.norm(plane_normal)
+
+        all_nodes = np.vstack([P1, out_positions.reshape(-1, 3), P2])
+        distances = np.dot(all_nodes - P1, plane_normal)
+        planarity_error = np.max(np.abs(distances))
+
+        allowed_deviation = tol_percent / 100 * np.linalg.norm(P2 - P1)
+        if planarity_error > allowed_deviation:
+            reason = f"Planarity deviation too high: {planarity_error:.2e} m"
+            if verbose:
+                print(f"❌ {reason}")
+            return False, reason, out_positions, Status_dynamic.value, Status_newton.value
+
+    # === Success ===
+    if verbose:
+        print(f"✅ Success. Force error = {error_force:.2e}, Length Factor = {out_length_factor.value:.5f}")
+        if planarity_error is not None:
+            print(f"   Max Planarity Deviation = {planarity_error:.2e} m")
+
+    return True, "", out_positions, Status_dynamic.value, Status_newton.value
+
 
 def generate_weight_test():
 
@@ -385,34 +435,19 @@ def plot_rope_2d(P1, P2, x, g_vec,
     ax2d.legend(handles=legend_elements, loc='lower left', frameon=True, handlelength=1.0, borderpad=0.5, labelspacing=0.3)
     plt.tight_layout()
     plt.show()
-def set_view_normal_to_plane(ax, normal_vec):
-    import numpy as np
-
-    # Normalize the plane normal
-    n = np.asarray(normal_vec, dtype=np.float64)
-    n /= np.linalg.norm(n)
-
-    # Elevation: angle from XY plane
-    elev = np.degrees(np.arcsin(n[2]))
-
-    # Azimuth: angle in XY plane
-    azim = np.degrees(np.arctan2(n[1], n[0]))
-
-    # Set view (Matplotlib ≥ 3.8 if using roll)
-    ax.view_init(elev=elev, azim=azim)
 
 
 # Run semi-random test batch
 np.random.seed(42)  # Fixed seed for reproducibility
-num_tests = 10
+num_tests = 1
 failures = []
 debug_level = 3
 #debug_mode = 0  # no debug
 #debug_mode = 1  #weight case
 #debug_mode = 2  #length test silent
-debug_mode = 3  #length test with plot
-#debug_mode = 4  #tension test 
 #debug_mode = 3  #length test with plot
+debug_mode = 4  #tension test 
+#debug_mode = 3  #tension test with plot
 
 for i in range(num_tests):
     print(f"\n--- Running Test Case {i + 1} ---")
@@ -436,14 +471,19 @@ for i in range(num_tests):
     elif debug_mode == 3:
         test = generate_test_case()
         success, reason, positions, status_dyn, status_newton = run_and_test_length(**test, verbose=True)
-        #### inset plot code 
         if not success:
             test["reason"] = reason
             test["positions"] = positions.copy()
             failures.append(test)        #        
     elif debug_mode == 4:
         test = test_case_tension()
-        run_and_test_tension()
+        success, reason, positions, status_dyn, status_newton = run_and_test_tension(**test, verbose=True, debug_level=debug_level)
+        if not success:
+            test["reason"] = reason
+            test["positions"] = positions.copy()
+            test["status_dyn"] = status_dyn
+            test["status_newton"] = status_newton
+            failures.append(test)
 
 # Summary
 print(f"\nSummary: {num_tests - len(failures)} passed / {num_tests} total.")
