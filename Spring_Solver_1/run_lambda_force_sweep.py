@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # === Load DLL ===
-dll_path = "./Resources/Library/solve_rope_length_lapak.dll"
+dll_path = "./Resources/Library/solve_rope_length_lapak.so"
 lib = ctypes.CDLL(dll_path)
 
 # === Define DLL function signature ===
