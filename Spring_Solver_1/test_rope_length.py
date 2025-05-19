@@ -60,11 +60,46 @@ lib.solve_rope_tension.argtypes = [
 ]
 lib.solve_rope_tension.restype = ctypes.c_int
 
+lib.solve_rope_tension_arc.argtypes = [
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # P1
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # P2
+    ctypes.c_int,                                      # n
+    ctypes.c_double,                                   # total_mass
+    ctypes.c_double,                                   # rope_diameter
+    ctypes.c_double,                                   # youngs_modulus
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # g_vec
+    ctypes.c_double,                                   # F_target
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # out_positions
+    ctypes.POINTER(ctypes.c_double),                   # out_length_factor
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # F_P1_out
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # F_P2_out
+    ctypes.POINTER(ctypes.c_int),                      # Status_newton
+    ctypes.c_int                                        # debug_level
+]
+lib.solve_rope_tension_arc.restype = ctypes.c_int
+
+lib.generate_lambda_force_table.argtypes = [
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # P1
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # P2
+    ctypes.c_int,                                      # n
+    ctypes.c_double,                                   # total_mass
+    ctypes.c_double,                                   # rope_diameter
+    ctypes.c_double,                                   # youngs_modulus
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # g_vec
+    ctypes.c_double,                                   # lambda_min
+    ctypes.c_double,                                   # lambda_max
+    ctypes.c_int,                                      # num_samples
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # lambda_out
+    ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),  # F_P1_magnitude_out
+    ctypes.c_int                                       # debug_level
+]
+lib.generate_lambda_force_table.restype = ctypes.c_int
+
 def test_case_tension():
     P1 = np.array([0.0, 0.0, 0.0], dtype=np.float64)
     P2 = np.array([0.0, 70.0, 0.0], dtype=np.float64)
-    n = 20
-    total_mass = 1.0
+    n = 10
+    total_mass = 7.0
     rope_diameter = 0.01
     youngs_modulus = 1e9
     g_vec = np.array([0.0, 0.0, -9.81], dtype=np.float64)
@@ -161,7 +196,6 @@ def run_and_test_tension(P1, P2, n, total_mass, rope_diameter,
             print(f"   Max Planarity Deviation = {planarity_error:.2e} m")
 
     return True, "", out_positions, Status_dynamic.value, Status_newton.value
-
 
 def generate_weight_test():
 
@@ -436,6 +470,107 @@ def plot_rope_2d(P1, P2, x, g_vec,
     plt.tight_layout()
     plt.show()
 
+def run_and_test_tension_arc(P1, P2, n, total_mass, rope_diameter,
+                              youngs_modulus, g_vec, F_target,
+                              force_tol=0.02, tol_percent=2.5,
+                              verbose=True, debug_level=3):
+    """
+    Executes solve_rope_tension_arc and evaluates correctness.
+    """
+    P1 = np.asarray(P1, dtype=np.float64)
+    P2 = np.asarray(P2, dtype=np.float64)
+    g_vec = np.asarray(g_vec, dtype=np.float64)
+
+    # --- Compute initial guess for s0 ---
+    L_straight = np.linalg.norm(P2 - P1)*1.5
+    s0 = np.full(n, L_straight / n, dtype=np.float64)
+
+    # --- Outputs ---
+    out_positions = np.zeros(n * 3, dtype=np.float64)
+    out_length_factor = ctypes.c_double()
+    F_P1_out = np.zeros(3, dtype=np.float64)
+    F_P2_out = np.zeros(3, dtype=np.float64)
+    Status_newton = ctypes.c_int()
+
+    # --- DLL call ---
+    result = lib.solve_rope_tension_arc(
+                                        P1, P2, n, total_mass,
+                                        rope_diameter, youngs_modulus,
+                                        g_vec, F_target,
+                                        out_positions,
+                                        ctypes.byref(out_length_factor),
+                                        F_P1_out, F_P2_out,
+                                        ctypes.byref(Status_newton),
+                                        debug_level )
+
+    if result != 0 or Status_newton.value != 0:
+        reason = f"Solver failed: ret={result}, newton={Status_newton.value}"
+        if verbose:
+            print(f"❌ {reason}")
+        return False, reason, out_positions, 0, Status_newton.value
+
+    # --- Force check ---
+    g_norm = np.linalg.norm(g_vec)
+    g_unit = g_vec / g_norm
+    force_proj = np.dot(F_P1_out, g_unit)
+    error_force = abs(force_proj - F_target)
+    allowed_error = force_tol * F_target
+
+    if error_force > allowed_error:
+        reason = (f"Force mismatch: projected P1 = {force_proj:.2f} N, "
+                  f"expected = {F_target:.2f} N (error = {error_force:.2e} N)")
+        if verbose:
+            print(f"❌ {reason}")
+        return False, reason, out_positions, 0, Status_newton.value
+
+    # --- Planarity check ---
+    cord_vec = P2 - P1
+    cord_vec /= np.linalg.norm(cord_vec)
+    g_proj = g_vec - np.dot(g_vec, cord_vec) * cord_vec
+    if np.linalg.norm(g_proj) < 1e-8:
+        planarity_error = None
+        if verbose:
+            print("⚠️ Skipping planarity check (g ‖ cord).")
+    else:
+        plane_normal = np.cross(cord_vec, g_proj)
+        plane_normal /= np.linalg.norm(plane_normal)
+        all_nodes = out_positions.reshape(-1, 3)
+        distances = np.dot(all_nodes - P1, plane_normal)
+        planarity_error = np.max(np.abs(distances))
+        allowed_deviation = tol_percent / 100 * np.linalg.norm(P2 - P1)
+        if planarity_error > allowed_deviation:
+            reason = f"Planarity deviation too high: {planarity_error:.2e} m"
+            if verbose:
+                print(f"❌ {reason}")
+            return False, reason, out_positions, 0, Status_newton.value
+
+    # --- Success ---
+    if verbose:
+        print(f"✅ Success. Force error = {error_force:.2e}, Length Factor = {out_length_factor.value:.5f}")
+        if planarity_error is not None:
+            print(f"   Max Planarity Deviation = {planarity_error:.2e} m")
+
+    return True, "", out_positions, 0, Status_newton.value
+
+def run_lambda_force_table(P1, P2, n, total_mass, rope_diameter, youngs_modulus, g_vec,
+                           lambda_min=1.0, lambda_max=3.0, num_samples=100):
+    P1 = np.array(P1, dtype=np.float64)
+    P2 = np.array(P2, dtype=np.float64)
+    g_vec = np.array(g_vec, dtype=np.float64)
+
+    lambda_out = np.zeros(num_samples, dtype=np.float64)
+    F_P1_mags = np.zeros(num_samples, dtype=np.float64)
+
+    ret = lib.generate_lambda_force_table(
+        P1, P2, n, total_mass, rope_diameter, youngs_modulus, g_vec,
+        lambda_min, lambda_max, num_samples, lambda_out, F_P1_mags, debug_level
+    )
+
+    if ret != 0:
+        return None, f"generate_lambda_force_table failed with code {ret}"
+
+    return lambda_out, F_P1_mags
+
 
 # Run semi-random test batch
 np.random.seed(42)  # Fixed seed for reproducibility
@@ -446,8 +581,10 @@ debug_level = 3
 #debug_mode = 1  #weight case
 #debug_mode = 2  #length test silent
 #debug_mode = 3  #length test with plot
-debug_mode = 4  #tension test 
-#debug_mode = 3  #tension test with plot
+#debug_mode = 4  #tension test 
+#debug_mode = 5   # arc test
+debug_mode = 6   # arc test
+
 
 for i in range(num_tests):
     print(f"\n--- Running Test Case {i + 1} ---")
@@ -484,6 +621,36 @@ for i in range(num_tests):
             test["status_dyn"] = status_dyn
             test["status_newton"] = status_newton
             failures.append(test)
+    elif debug_mode == 5:
+        test = test_case_tension()
+        success, reason, positions, status_dyn, status_newton = run_and_test_tension_arc(**test, verbose=True, debug_level=debug_level)
+        if not success:
+            test["reason"] = reason
+            test["positions"] = positions.copy()
+            test["status_dyn"] = status_dyn
+            test["status_newton"] = status_newton
+            failures.append(test)
+    elif debug_mode == 6:
+        test = test_case_tension()
+        lambda_vals, F_vals = run_lambda_force_table(
+            test["P1"], test["P2"], test["n"], test["total_mass"],
+            test["rope_diameter"], test["youngs_modulus"], test["g_vec"],
+            lambda_min=1.003, lambda_max=4.5, num_samples=200 )
+
+        if lambda_vals is not None:
+            plt.plot(lambda_vals, F_vals, label="||F_P1|| vs λ")
+            plt.xlabel("Length Factor λ")
+            plt.ylabel("Force Magnitude at P1 [N]")
+            plt.title("Force vs Rope Length Factor")
+            plt.grid(True)
+            plt.legend()
+            plt.tight_layout()
+            plt.show()
+        else:
+            print(F_vals)
+
+
+
 
 # Summary
 print(f"\nSummary: {num_tests - len(failures)} passed / {num_tests} total.")
