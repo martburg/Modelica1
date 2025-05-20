@@ -194,13 +194,15 @@ static void report_endpoint_forces_springs(
     double f2_plane    = vec3_dot(F_P2, e_plane);
 
     log_info("=== Endpoint Force Decomposition (Spring elongation Newton) ===\n");
+    log_info("\n");
+    log_info("||P1 F|| = %.6f\n",norm3(F_P1));
     log_info("F_P1: [%f, %f, %f]\n", F_P1[0], F_P1[1], F_P1[2]);
     log_info("||F_P1_perp|| = %.6f, ||F_P1_para|| = %.6f\n",fabs(f1_plane),fabs(f1_parallel));
-    //log_info("F_P1: [%f, %f, %f]\n", F_P1[0], F_P1[1], F_P1[2]);
+    log_info("\n"); 
+    log_info("||P2 F|| = %.6f\n",norm3(F_P2));
     log_info("F_P2: [%f, %f, %f]\n", F_P2[0], F_P2[1], F_P2[2]);
-    //log_info("||P2 F|| = %.6f\n",norm3(F_P2));
     log_info("||F_P2_perp|| = %.6f, ||F_P2_para|| = %.6f\n\n",fabs(f2_plane),fabs(f2_parallel));
-    
+    log_info("\n");    
    
 /*    double F_net[3] = {F_P1[0] + F_P2[0], F_P1[1] + F_P2[1], F_P1[2] + F_P2[2]};
     double G[3] = {
@@ -290,11 +292,16 @@ void report_endpoint_forces_weight(
     project_parallel_and_perpendicular(F_P1, g_unit, F_P1_parallel, F_P1_perp);
     project_parallel_and_perpendicular(F_P2, g_unit, F_P2_parallel, F_P2_perp);
 
-    log_info("=== Endpoint Force Decomposition (Weight) ===\n");
+    log_info("=== Endpoint Force Decomposition (Spring elongation Newton) ===\n");
+    log_info("\n");
+    log_info("||P1 F|| = %.6f\n",norm3(F_P1));
     log_info("F_P1: [%f, %f, %f]\n", F_P1[0], F_P1[1], F_P1[2]);
     log_info("||F_P1_perp|| = %.6f, ||F_P1_para|| = %.6f\n", fabs(norm3(F_P1_perp)),fabs( norm3(F_P1_parallel)));
+    log_info("\n"); 
+    log_info("||P2 F|| = %.6f\n",norm3(F_P2));
     log_info("F_P2: [%f, %f, %f]\n", F_P2[0], F_P2[1], F_P2[2]);
-    log_info("||F_P2_perp|| = %.6f, ||F_P2_para|| = %.6f\n", fabs(norm3(F_P2_perp)),fabs( norm3(F_P2_parallel)));
+    log_info("||F_P2_perp|| = %.6f, ||F_P2_para|| = %.6f\n\n", fabs(norm3(F_P2_perp)),fabs( norm3(F_P2_parallel)));
+    log_info("\n"); 
 
     F_P1_out[0] = F_P1[0]; F_P1_out[1] = F_P1[1]; F_P1_out[2] = F_P1[2];
     F_P2_out[0] = F_P2[0]; F_P2_out[1] = F_P2[1]; F_P2_out[2] = F_P2[2];
@@ -471,8 +478,8 @@ int dynamic_relaxation(
     free(v);
     free(F);
     if (converged == 0){
-        log_error("\nDynamic relaxation didn NOT CONVERGE after %d iterations\n", max_steps);
-        return SOLVE_ERROR_MAX_ITER;
+        log_error("\nDynamic relaxation did NOT CONVERGE after %d iterations\n", max_steps);
+        return 100 + SOLVE_ERROR_MAX_ITER;
     }; 
     return 0;
 }
@@ -588,6 +595,9 @@ int analytic_newton_solver_3d(
             free(res); free(J); free(ipiv); free(dx);
             return 0;
         }
+        if (iter % 100 == 0) {
+            log_debug("3D Newton iter %d: step norm %.3e, res_norm  %.3e\n", iter, norm_dx,sqrt(orig_res_norm2));
+        }
     }
 
     log_error("3D Newton did NOT CONVERGE after %d iterations\n", max_iter);
@@ -637,23 +647,32 @@ DLL_EXPORT int solve_rope_length(
     int dof = (n - 1) * 3;
     double *x = malloc(dof * sizeof(double));
     double *x_init = malloc(dof * sizeof(double));
-    double *x_cat = malloc((n - 2) * 3 * sizeof(double));
     double *x_relaxed = malloc(dof * sizeof(double));
     double *x_newton_3d = malloc(dof * sizeof(double));
     double *s0_init = malloc(n * sizeof(double));
-    double *s0_cat = malloc(n * sizeof(double));
-    double *s0_init_scaled = malloc(n * sizeof(double));
+      double *s0_init_scaled = malloc(n * sizeof(double));
     double *s0_post_init = malloc(n * sizeof(double));
     double *s0_post_relax = malloc(n * sizeof(double));
     double *s0_post_newton_3d = malloc(n * sizeof(double));
 
-    if (!x || !x_init || !x_cat || !x_relaxed || !x_newton_3d || !s0_init || !s0_cat || !s0_init_scaled ||
+    if (!x || !x_init || !x_relaxed || !x_newton_3d || !s0_init || !s0_init_scaled ||
         !s0_post_init || !s0_post_relax || !s0_post_newton_3d ){
         free(x);free(x_relaxed);free(x_newton_3d);free(s0_init);free(s0_init_scaled);
         free(s0_post_init);free(s0_post_relax);free(s0_post_newton_3d);
         return -1;}
 
-    if ((n < 2) || rope_diameter <= 0.001 || youngs_modulus <1000 || length_factor < 1 ) return INVALD_INPUT;    
+    if ((n < 3) || rope_diameter <= 0.001 || youngs_modulus <1000 || length_factor < 1 ||total_mass < 0.001) {
+        log_error("Invalid input: n = %d, rope_diameter = %f",n, rope_diameter);
+        log_error("youngs_modulus = %f, length_factor = %f\n", youngs_modulus, length_factor);
+        log_error("total_mass = %f\n", total_mass);
+        log_error("n must be at least 3, rope_diameter > 0.001, youngs_modulus > 1000, length_factor > 1, total_mass > 0.001\n");
+        free(x);free(x_relaxed);free(x_newton_3d);free(s0_init);free(s0_init_scaled);
+        free(s0_post_init);free(s0_post_relax);free(s0_post_newton_3d);
+        return INVALD_INPUT;
+    } 
+    if (n > 1000) {
+        log_warn("Warning: n = %d is large, this may take a while\n", n);
+    }  
 
     double dx_line[3] = {P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]};
     double L_straight = sqrt(dx_line[0]*dx_line[0] + dx_line[1]*dx_line[1] + dx_line[2]*dx_line[2]);
@@ -675,8 +694,14 @@ DLL_EXPORT int solve_rope_length(
 
     if (g_len < 1.62) {
         log_error("Gravity to low (%.2f m/s²)\n", g_len);
+        free(x); free(x_init); free(x_relaxed);
+        free(x_newton_3d); free(s0_init); free(s0_init_scaled); free(s0_post_init); free(s0_post_relax);
+        free(s0_post_newton_3d);
         return -4;
     } else if (g_len > 49.05) {
+        free(x); free(x_init); free(x_relaxed);
+        free(x_newton_3d); free(s0_init); free(s0_init_scaled); free(s0_post_init); free(s0_post_relax);
+        free(s0_post_newton_3d);
         log_error("Gravity to high (%.2f m/s²)\n", g_len);
         return -5;
     } 
@@ -824,13 +849,16 @@ DLL_EXPORT int solve_rope_length(
     log_info("||P1 F|| = %.6f\n",norm3(F_P1_out_n));
     log_info("||P2 F|| = %.6f\n",norm3(F_P2_out_n));
 
-    log_warn( "Delta F - m*g (Springs) = %.6e\n\n",Delta_F(total_mass, g_vec, F_P1_out_n, F_P2_out_n));
+    log_warn( "Springs Delta F - m*g (Springs) = %.6e\n\n",Delta_F(total_mass, g_vec, F_P1_out_n, F_P2_out_n));
 
     report_endpoint_forces_weight(P1,P2,x_newton_3d,n,g_vec,total_mass, F_P1_out_w, F_P2_out_w);
     log_info("||P1 F|| = %.6f\n",norm3(F_P1_out_w));
     log_info("||P2 F|| = %.6f\n",norm3(F_P2_out_w));
 
-    log_warn( "Delta F - m*g (Weights) = %.6e\n\n",Delta_F(total_mass, g_vec, F_P1_out_w, F_P2_out_w)); 
+    log_warn( "Weights Delta F - m*g (Weights) = %.6e\n\n",Delta_F(total_mass, g_vec, F_P1_out_w, F_P2_out_w)); 
+
+    log_warn("Arc length mismatch ABS  : Init = %.3f, Dynamic = %.3f, Newton = %.3f\n", *Length_initial, *Length_dynamic, *Length_newton);
+    log_warn("Arc length mismatch DELTA:              Dynamic = %.3f, Newton = %.3f\n", *Length_initial - *Length_dynamic, *Length_initial - *Length_newton);
     
     // --- Max sag log ---
     double max_sag = -1.0;
@@ -862,702 +890,13 @@ DLL_EXPORT int solve_rope_length(
     log_moreinfo("Status Dynamc relaxation %d Status Newton %d\n",*Status_dynamic, *Status_newton);
 
     free(x); free(x_init); free(x_relaxed);
-    free(x_newton_3d); free(s0_init);free(x_cat); free(s0_cat); free(s0_init_scaled); free(s0_post_init); free(s0_post_relax);
+    free(x_newton_3d); free(s0_init); free(s0_init_scaled); free(s0_post_init); free(s0_post_relax);
     free(s0_post_newton_3d);
 
-    if (*Status_dynamic != 0 || *Status_newton != 0) {
-        return SOLVE_ERROR;  // or a better code
-    }
-    return 0;
-}
-
-DLL_EXPORT int solve_rope_tension(
-    double* P1, double* P2,
-    int n, double total_mass,
-    double rope_diameter, double youngs_modulus,
-    double* g_vec, double F_target,
-    double* out_positions,
-    double* out_length_factor,
-    double* F_P1_out,
-    double* F_P2_out,
-    int* Status_dynamic,
-    int* Status_newton,
-    int debug_level)
-{
-    const double tol = 1e-3;
-    const int max_iter = 30;
-    double L_min = 1.01, L_max = 3.0;
-    double L_mid = 0.0;
-
-    double dx[3] = {P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]};
-    double L_straight = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]);
-
-    double best_force_error = 1e10;
-    double best_LF = L_min;
-
-    double dummy_F_P1_n[3], dummy_F_P2_n[3];
-    double dummy_F_P1_w[3], dummy_F_P2_w[3];
-    double best_F_P1[3], best_F_P2[3];
-    double Length_initial, Length_cat, Length_dynamic, Length_newton;
-
-    double* temp_positions = malloc((n - 1) * 3 * sizeof(double));
-    double* best_positions = malloc((n - 1) * 3 * sizeof(double));
-    if (!temp_positions || !best_positions) {
-        free(temp_positions); free(best_positions);
-        return -1;
-    }
-
-    for (int i = 0; i < max_iter; ++i) {
-        L_mid = 0.5 * (L_min + L_max);
-        double length_factor = L_mid;
-
-        int status = solve_rope_length(
-            P1, P2,
-            n, total_mass, length_factor,
-            rope_diameter, youngs_modulus,
-            g_vec, temp_positions,
-            dummy_F_P1_w, dummy_F_P2_w,
-            dummy_F_P1_n, dummy_F_P2_n,
-            &Length_initial, &Length_cat, &Length_dynamic, &Length_newton,
-            Status_dynamic, Status_newton,
-            debug_level);
-
-        if (status != 0) {
-            free(temp_positions);
-            free(best_positions);
-            return status;
-        }
-
-        double force_mag = sqrt(
-            dummy_F_P1_w[0]*dummy_F_P1_w[0] +
-            dummy_F_P1_w[1]*dummy_F_P1_w[1] +
-            dummy_F_P1_w[2]*dummy_F_P1_w[2]);
-
-        double error = force_mag - F_target;
-
-        if (fabs(error) < tol) {
-            *out_length_factor = length_factor;
-            memcpy(out_positions, temp_positions, (n - 1) * 3 * sizeof(double));
-            memcpy(F_P1_out, dummy_F_P1_w, 3 * sizeof(double));
-            memcpy(F_P2_out, dummy_F_P2_w, 3 * sizeof(double));
-            free(temp_positions);
-            free(best_positions);
-            return 0;
-        }
-
-        if (fabs(error) < best_force_error) {
-            best_force_error = fabs(error);
-            best_LF = length_factor;
-            memcpy(best_positions, temp_positions, (n - 1) * 3 * sizeof(double));
-            memcpy(best_F_P1, dummy_F_P1_w, 3 * sizeof(double));
-            memcpy(best_F_P2, dummy_F_P2_w, 3 * sizeof(double));
-        }
-
-        if (error > 0)
-            L_max = L_mid;
-        else
-            L_min = L_mid;
-    }
-
-    // Line search failed, return best approximation found
-    *out_length_factor = best_LF;
-    memcpy(out_positions, best_positions, (n - 1) * 3 * sizeof(double));
-    memcpy(F_P1_out, best_F_P1, 3 * sizeof(double));
-    memcpy(F_P2_out, best_F_P2, 3 * sizeof(double));
-
-    free(temp_positions);
-    free(best_positions);
-    return SOLVE_ERROR_LINE_SEARCH_FAILED;
-}
-
-void compute_jacobian_arc(
-    double* J_out, const double* x, const double* P1, const double* P2,
-    const double* s0, int n, double k, double m, const double* g, double lambda)
-{
-    int N = 3 * (n - 2); // Degrees of freedom for internal nodes
-    memset(J_out, 0, sizeof(double) * N * N);
-
-    for (int i = 0; i < n - 2; ++i) {
-        const double* xi = &x[i * 3];
-
-        const double* x_left  = (i == 0)     ? P1 : &x[(i - 1) * 3];
-        const double* x_right = (i == n - 3) ? P2 : &x[(i + 1) * 3];
-
-        double dL[3], dR[3];
-        for (int j = 0; j < 3; ++j) {
-            dL[j] = xi[j] - x_left[j];
-            dR[j] = xi[j] - x_right[j];
-        }
-
-        double lL = sqrt(dL[0]*dL[0] + dL[1]*dL[1] + dL[2]*dL[2]);
-        double lR = sqrt(dR[0]*dR[0] + dR[1]*dR[1] + dR[2]*dR[2]);
-
-        double sL = lambda * s0[i];
-        double sR = lambda * s0[i + 1];
-
-        double coeffL1 = -k * (1.0 - sL / lL);
-        double coeffL2 = -k * sL / (lL * lL * lL);
-
-        double coeffR1 = -k * (1.0 - sR / lR);
-        double coeffR2 = -k * sR / (lR * lR * lR);
-
-        double blockL[9], blockR[9];
-
-        for (int r = 0; r < 3; ++r) {
-            for (int c = 0; c < 3; ++c) {
-                double I = (r == c) ? 1.0 : 0.0;
-                blockL[r * 3 + c] = coeffL1 * I + coeffL2 * dL[r] * dL[c];
-                blockR[r * 3 + c] = coeffR1 * I + coeffR2 * dR[r] * dR[c];
-            }
-        }
-
-        int row = i * 3;
-
-        // Diagonal block
-        for (int r = 0; r < 3; ++r) {
-            for (int c = 0; c < 3; ++c) {
-                J_out[(row + r) * N + (row + c)] += blockL[r * 3 + c] + blockR[r * 3 + c];
-            }
-        }
-
-        // Off-diagonal: left neighbor
-        if (i > 0) {
-            int colL = (i - 1) * 3;
-            for (int r = 0; r < 3; ++r) {
-                for (int c = 0; c < 3; ++c) {
-                    J_out[(row + r) * N + (colL + c)] -= blockL[r * 3 + c];
-                }
-            }
-        }
-
-        // Off-diagonal: right neighbor
-        if (i < n - 3) {
-            int colR = (i + 1) * 3;
-            for (int r = 0; r < 3; ++r) {
-                for (int c = 0; c < 3; ++c) {
-                    J_out[(row + r) * N + (colR + c)] -= blockR[r * 3 + c];
-                }
-            }
-        }
-    }
-}
-
-void initialize_positions(
-    double* x,
-    const double* P1,
-    const double* P2,
-    int n)
-{
-    for (int i = 1; i < n - 1; ++i) {
-        double t = (double)i / (n - 1);
-        for (int j = 0; j < 3; ++j) {
-            x[(i - 1) * 3 + j] = (1.0 - t) * P1[j] + t * P2[j];
-        }
-    }
-}
-
-static void compute_residuals_arc(
-    double* residuals_out, const double* x, const double* P1,
-    const double* P2, const double* s0,int n, double k, double m,
-    const double* g_vec, double lambda)
-{
-    for (int i = 0; i < n - 2; ++i) {
-        const double* xi = &x[i * 3];
-        const double* x_left  = (i == 0)     ? P1         : &x[(i - 1) * 3];
-        const double* x_right = (i == n - 3) ? P2         : &x[(i + 1) * 3];
-
-        double dL[3], dR[3];
-        for (int j = 0; j < 3; ++j) {
-            dL[j] = xi[j] - x_left[j];
-            dR[j] = xi[j] - x_right[j];
-        }
-        double lL = sqrt(dL[0]*dL[0] + dL[1]*dL[1] + dL[2]*dL[2]);
-        double lR = sqrt(dR[0]*dR[0] + dR[1]*dR[1] + dR[2]*dR[2]);
-        double sL = lambda * s0[i];
-        double sR = lambda * s0[i + 1];
-
-        for (int j = 0; j < 3; ++j) {
-            double FL = -k * (lL - sL) / (lL + 1e-12) * dL[j];
-            double FR = -k * (lR - sR) / (lR + 1e-12) * dR[j];
-            residuals_out[i * 3 + j] = FL + FR + m * g_vec[j];
-        }
-    }
-}
-
-static void compute_residuals_augmented(const double* x, double lambda,
-    const double* x0, const double* s0, const double* P1, const double* P2,
-    int n, double k, double m, const double* g, double* R_aug) {
-    int N = 3*(n-2);
-    double R[N];
-    compute_residuals_arc(R, x, P1, P2, s0, n, k, m, g, lambda);
-    for (int i = 0; i < N; ++i) R_aug[i] = R[i];
-    double arc = 0;
-    for (int i = 0; i < N; ++i) {
-        double dx = x[i] - x0[i];
-        arc += dx * dx;
-    }
-    R_aug[N] = arc - TOL_ARC * TOL_ARC;
-}
-
-void compute_jacobian_augmented(const double* x, double lambda,
-    const double* x0, const double* s0, const double* P1, const double* P2,
-    int n, double k, double m, const double* g, double* J_aug)
-{
-    int N = 3 * (n - 2);
-    double* J = (double*)malloc(sizeof(double) * N * N);
-    compute_jacobian_arc(J, x, P1, P2, s0, n, k, m, g, lambda);
-
-    // Copy J into top-left of J_aug
-    for (int i = 0; i < N; ++i)
-        for (int j = 0; j < N; ++j)
-            J_aug[i * (N + 1) + j] = J[i * N + j];
-
-    // Compute ∂R/∂λ analytically and fill last column
-    for (int i = 0; i < n - 2; ++i) {
-        const double* xi = &x[i * 3];
-        const double* x_left  = (i == 0)     ? P1 : &x[(i - 1) * 3];
-        const double* x_right = (i == n - 3) ? P2 : &x[(i + 1) * 3];
-
-        double dL[3], dR[3];
-        double normL = 0, normR = 0;
-
-        for (int j = 0; j < 3; ++j) {
-            dL[j] = xi[j] - x_left[j];
-            normL += dL[j] * dL[j];
-            dR[j] = xi[j] - x_right[j];
-            normR += dR[j] * dR[j];
-        }
-
-        normL = sqrt(normL);
-        normR = sqrt(normR);
-
-        // Avoid div-by-zero
-        if (normL < 1e-12) normL = 1e-12;
-        if (normR < 1e-12) normR = 1e-12;
-
-        double factorL = k * s0[i] / normL;
-        double factorR = k * s0[i + 1] / normR;
-
-        for (int j = 0; j < 3; ++j) {
-            double dF_dlambda = factorL * dL[j] + factorR * dR[j];
-            J_aug[(i * 3 + j) * (N + 1) + N] = dF_dlambda;
-            J_aug[N * (N + 1) + (i * 3 + j)] = 2.0 * (x[i * 3 + j] - x0[i * 3 + j]);
-        }
-    }
-
-    // Last element (bottom-right corner)
-    J_aug[(N + 1) * (N + 1) - 1] = 0.0;
-
-    free(J);
-}
-
-int newton_augmented(double* x, double* lambda_out,
-    const double* x0, const double* s0,
-    const double* P1, const double* P2,
-    int n, double k, double m, const double* g)
-{
-    int N = 3 * (n - 2);
-    double lambda = *lambda_out;
-
-    double* R_aug = (double*)malloc(sizeof(double) * (N + 1));
-    double* J_aug = (double*)malloc(sizeof(double) * (N + 1) * (N + 1));
-    double* dx_aug = (double*)malloc(sizeof(double) * (N + 1));
-    int* ipiv = (int*)malloc(sizeof(int) * (N + 1));
-
-    if (!R_aug || !J_aug || !dx_aug || !ipiv) {
-        log_error("Memory allocation failed in newton_augmented\n");
-        free(R_aug); free(J_aug); free(dx_aug); free(ipiv);
-        return SOLVE_ERROR_ALLOC;
-    }
-
-    for (int iter = 0; iter < MAX_ITER_ARC; ++iter) {
-        compute_residuals_augmented(x, lambda, x0, s0, P1, P2, n, k, m, g, R_aug);
-        compute_jacobian_augmented(x, lambda, x0, s0, P1, P2, n, k, m, g, J_aug);
-
-        for (int i = 0; i < N + 1; ++i)
-            J_aug[i * (N + 1) + i] += 1e-10;
-
-        for (int i = 0; i < N + 1; ++i) {
-            if (!isfinite(R_aug[i])) {
-                log_error("NaN/Inf in R_aug[%d] = %f\n", i, R_aug[i]);
-                free(R_aug); free(J_aug); free(dx_aug); free(ipiv);
-                return SOLVE_ERROR_NAN;
-            }
-            for (int j = 0; j < N + 1; ++j) {
-                if (!isfinite(J_aug[i * (N + 1) + j])) {
-                    log_error("NaN/Inf in J_aug[%d,%d] = %f\n", i, j, J_aug[i * (N + 1) + j]);
-                    free(R_aug); free(J_aug); free(dx_aug); free(ipiv);
-                    return SOLVE_ERROR_NAN;
-                }
-            }
-        }
-
-        for (int i = 0; i < N + 1; ++i)
-            dx_aug[i] = -R_aug[i];
-
-        int Nsys = N + 1;
-        int info;
-        dgesv_(&Nsys, &(int){1}, J_aug, &Nsys, ipiv, dx_aug, &Nsys, &info);
-
-        if (info != 0) {
-            log_error("DGESV failed with info = %d\n", info);
-            free(R_aug); free(J_aug); free(dx_aug); free(ipiv);
-            return SOLVE_ERROR_JACOBIAN_FAILED;
-        }
-
-        for (int i = 0; i < N; ++i)
-            x[i] += dx_aug[i];
-
-        // Adaptive lambda step with safety cap
-        const double lambda_lower_bound = 0.1;
-        const double lambda_upper_bound = 15.0;
-        const double max_lambda_step = 0.05 * lambda;
-        const double hard_lambda_step_limit = 16.0 * max_lambda_step;
-
-        if (fabs(dx_aug[N]) > hard_lambda_step_limit) {
-            log_debug("λ-step clipped from %.6f to %.6f\n", dx_aug[N], SIGN(dx_aug[N]) * hard_lambda_step_limit);
-            dx_aug[N] = SIGN(dx_aug[N]) * hard_lambda_step_limit;
-        }
-
-        // Backtracking line search on λ
-        int backtrack_success = 0;
-        double backtrack_factor = 1.0;
-        for (int bt = 0; bt < 20; ++bt) {
-            double lambda_candidate = lambda + backtrack_factor * dx_aug[N];
-            if (lambda_candidate >= lambda_lower_bound && lambda_candidate <= lambda_upper_bound) {
-                lambda = lambda_candidate;
-                backtrack_success = 1;
-                break;
-            }
-            backtrack_factor *= 0.5;
-        }
-
-        if (!backtrack_success) {
-            double lambda_candidate = lambda + dx_aug[N];
-            double lambda_clipped = fmin(fmax(lambda_candidate, lambda_lower_bound), lambda_upper_bound);
-            log_warn("Backtracking failed — λ clipped from %.6f to %.6f\n", lambda_candidate, lambda_clipped);
-            lambda = lambda_clipped;
-        }
-
-        // Compute norms
-        double force_residual_norm2 = 0.0;
-        for (int i = 0; i < N; ++i)
-            force_residual_norm2 += R_aug[i] * R_aug[i];
-        double force_residual_norm = sqrt(force_residual_norm2);
-        double arc_residual = R_aug[N];
-        double res_norm_total = sqrt(force_residual_norm2 + arc_residual * arc_residual);
-
-        log_info("Iter %3d | λ = %.6f | |R_force| = %.3e | R_arc = %.3e | ||R_total|| = %.3e\n",
-                 iter, lambda, force_residual_norm, arc_residual, res_norm_total);
-
-        if (res_norm_total < TOL_ARC) {
-            *lambda_out = lambda;
-            free(R_aug); free(J_aug); free(dx_aug); free(ipiv);
-            return 0;
-        }
-    }
-
-    log_error("Newton augmented did NOT converge in %d iterations\n", MAX_ITER_ARC);
-    free(R_aug); free(J_aug); free(dx_aug); free(ipiv);
-    return SOLVE_ERROR_MAX_ITER;
-}
-
-
-int solve_rope_arc_length(
-    const double* P1, const double* P2, int n,
-    double total_mass, double length_factor,
-    double rope_diameter, double youngs_modulus,
-    const double* g_vec,
-    double* out_positions,        // full positions array (n * 3)
-    double* out_length_factor,    // lambda
-    double* F_P1_out,             // force on P1
-    double* F_P2_out,             // force on P2
-    int* Status_newton            // status code
-)
-{
-    int dof = (n - 1) * 3;
-    double *x = malloc(dof * sizeof(double));
-    double *x_init = malloc(dof * sizeof(double));
-    double *x_relaxed = malloc(dof * sizeof(double));
-    double *s0_init_scaled = malloc(n * sizeof(double));
-    double *s0_init = malloc(n * sizeof(double));
-    double *s0_post_init = malloc(n * sizeof(double));
-    double *s0_post_relax = malloc(n * sizeof(double));
-    double *s0_post_newton_aug = malloc(n * sizeof(double));
-
-    if (!x || !x_init || !x_relaxed ||  !s0_init_scaled ||
-        !s0_post_init || !s0_post_relax|| !s0_post_newton_aug  ){
-        free(x);free(x_init);free(x_relaxed);free(s0_init_scaled);
-        free(s0_post_init);free(s0_post_relax);free(s0_post_newton_aug);
-        log_error("Memory allocation failed\n");
-        return -10;}
-
-
-    double Length_initial;
-    double Status_dynamic;
-    double Length_dynamic;
-    double Status_newton_aug;
-    double Length_newton_aug;
-
-    double dx_line[3] = {P2[0] - P1[0], P2[1] - P1[1], P2[2] - P1[2]};
-    double L_straight = sqrt(dx_line[0]*dx_line[0] + dx_line[1]*dx_line[1] + dx_line[2]*dx_line[2]);
-    double L0 = L_straight * length_factor;
-/* Sanity checks
-*/
-    for (int i = 0; i < n; ++i) {
-        s0_init[i] = L0 / n;
-        s0_init_scaled[i] = length_factor / n;
-    }
-
-    double A = 3.1415926 * rope_diameter * rope_diameter / 4.0;
-    double L_seg = L0 / n;
-    double c = (youngs_modulus * A) / L_seg;
-    double m = total_mass / (n - 1);
-    double g_norm = sqrt(g_vec[0]*g_vec[0] + g_vec[1]*g_vec[1] + g_vec[2]*g_vec[2]);
-
-    // Scaling factors
-    double scale_pos = L_straight;
-    double scale_mass = total_mass;
-    double scale_force = total_mass * g_norm;
-
-    // Scaled problem inputs
-    double P1_scaled[3] = {P1[0] / scale_pos, P1[1] / scale_pos, P1[2] / scale_pos};
-    double P2_scaled[3] = {P2[0] / scale_pos, P2[1] / scale_pos, P2[2] / scale_pos};
-    double m_scaled = m / scale_mass;
-    double g_vec_scaled[3] = {g_vec[0] / scale_force, g_vec[1] / scale_force, g_vec[2] / scale_force};
-    double c_scaled = c / scale_force;
-    double L0_scaled = L0 / scale_pos;
-
-    // --- Initialize rope with sag ---
-    double s0_post_init_sum = init_dynamic_relaxation(
-        x, P1_scaled, P2_scaled, n, g_vec_scaled, s0_post_init, L0_scaled, scale_pos);
-
-    for (int i = 0; i < dof; ++i) {
-        x_init[i] = x[i] * scale_pos;
-        }
-    log_moreinfo("Positions initiated from cubic parabola:\n");
-    for (int i = 0; i < n - 1; ++i) {
-        log_moreinfo("s0_post_init %-2d : %-10.6f    ", i, s0_post_init[i] * scale_pos);
-        log_moreinfo("Node %-3d: [%-12.6f, %12.6f, %12.6f]\n", i + 1,
-            x[i*3+0] * scale_pos, x[i*3+1] * scale_pos, x[i*3+2] * scale_pos);
-    }
-    log_moreinfo("s0_post_init %-3d : %f    \n",n-1,s0_post_init[n-1] * scale_pos);    
-    log_info("Initial Length   = %f, Delta Length = %f]\n", s0_post_init_sum * scale_pos, s0_post_init_sum * scale_pos - L0);
-    Length_initial = s0_post_init_sum * scale_pos;
-
-    // --- Relax dynamically ---
-
-    Status_dynamic = dynamic_relaxation(
-        x, x_relaxed, P1_scaled, P2_scaled, n, s0_init_scaled, c_scaled, m_scaled, g_vec_scaled,0.001, 10000000, scale_pos);
-    if (Status_dynamic != 0) {
-        log_error("Dynamic relaxation failed\n");
-    }
-    for (int i = 0; i < dof; ++i) {
-        x_relaxed[i] *= scale_pos;
-    }
-    // Compute Dynamic Relaxation segment lengths
-    double s0_post_relax_sum = 0;
-    for (int i = 0; i < n; ++i) {
-        double xi[3], xi1[3];
-        if (i == 0) {
-            for (int j = 0; j < 3; ++j) {
-                xi[j]  = P1[j];
-                xi1[j] = x_relaxed[j];
-            }
-        } else if (i == n - 1) {
-            for (int j = 0; j < 3; ++j) {
-                xi[j]  = x_relaxed[(n - 2) * 3 + j];
-                xi1[j] = P2[j];
-            }
-        } else {
-            for (int j = 0; j < 3; ++j) {
-                xi[j]  = x_relaxed[(i - 1) * 3 + j];
-                xi1[j] = x_relaxed[i * 3 + j];
-            }
-        }
-        double dx[3] = {
-            xi1[0] - xi[0], xi1[1] - xi[1], xi1[2] - xi[2]
-        };
-        s0_post_relax[i] = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]);
-        s0_post_relax_sum += s0_post_relax[i];
-    } 
-    log_moreinfo("Positions after dynamic relaxation:\n");
-    for (int i = 0; i < n - 1; ++i) {
-        log_moreinfo("s0_post_relax %-3d : %-10.6f    ", i, s0_post_relax[i]);
-        log_moreinfo("Node %-3d: [%12.6f, %12.6f, %12.6f]\n", i + 1,
-            x_relaxed[i*3+0], x_relaxed[i*3+1], x_relaxed[i*3+2]);
-    }
-    log_moreinfo("s0_post_relax %d : %f    \n",n-1,s0_post_relax[n-1]);   
-    log_info("Relaxed Length   = %f, Delta Length = %f]\n", s0_post_relax_sum, s0_post_relax_sum - L0);
-    Length_dynamic = s0_post_relax_sum;
-
-    // --- Newton Aug ---
-
-    double lambda = length_factor;
-    int status = newton_augmented(x, &lambda, x_relaxed, s0_post_relax, P1, P2, n, c, m, g_vec);
-    if (status != 0) {
-        log_error("Newton Aug failed with return %d\n",status);
-    }
-    for (int i = 0; i < 3 * (n - 1); ++i){
-        x[i] *= scale_pos;}
-    // Compute Newton aug segment lengths
-    double s0_post_newton_aug_sum = 0;
-    for (int i = 0; i < n; ++i) {
-        double xi[3], xi1[3];
-        if (i == 0) {
-            for (int j = 0; j < 3; ++j) {
-                xi[j]  = P1[j];
-                xi1[j] = x[j];
-            }
-        } else if (i == n - 1) {
-            for (int j = 0; j < 3; ++j) {
-                xi[j]  = x[(n - 2) * 3 + j];
-                xi1[j] = P2[j];
-            }
-        } else {
-            for (int j = 0; j < 3; ++j) {
-                xi[j]  = x[(i - 1) * 3 + j];
-                xi1[j] = x[i * 3 + j];
-            }
-        }
-        double dx[3] = {
-            xi1[0] - xi[0], xi1[1] - xi[1], xi1[2] - xi[2]
-        };
-        s0_post_newton_aug[i] = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2]);
-        s0_post_newton_aug_sum += s0_post_relax[i];
-    } 
-    log_moreinfo("Positions after Newton aug relaxation:\n");
-    for (int i = 0; i < n - 1; ++i) {
-        log_moreinfo("s0_post_newton_aug %-3d : %-10.6f    ", i, s0_post_newton_aug[i]);
-        log_moreinfo("Node %-3d: [%12.6f, %12.6f, %12.6f]\n", i + 1,
-            x[i*3+0], x[i*3+1], x[i*3+2]);
-    }
-    log_moreinfo("s0_post_newton_aug %d : %f    \n",n-1,s0_post_newton_aug[n-1]);   
-    log_info("Newton Aug Length   = %f, Delta Length = %f]\n", s0_post_newton_aug_sum, s0_post_newton_aug_sum - L0);
-    Length_newton_aug = s0_post_newton_aug_sum;    
-    
-    *out_length_factor = lambda;
-
-    // Reconstruct segment lengths s0_scaled = lambda * s0[i]
-    //double s0_scaled[n];
-    //for (int i = 0; i < n; ++i)
-    //    s0_scaled[i] = lambda * s0[i];
-
-    // Compute and return forces
-
-    //report_endpoint_forces_springs(P1, P2, &out_positions[3], n, s0_scaled, k, g_vec, m, 1.0, total_mass, F_P1_out, F_P2_out);
-    report_endpoint_forces_weight(P1, P2, x , n, g_vec, total_mass, F_P1_out, F_P2_out);
-
-    log_warn("|| F_P1 || = %f , || F_P2 || = %f\n", norm3(F_P1_out),norm3(F_P2_out));
-
-    *Status_newton = status;
-
-    memcpy(&out_positions[0], P1, sizeof(double) * 3);
-    for (int i = 0; i < 3 * (n - 2); ++i)
-        out_positions[i + 3] = x[i];
-    memcpy(&out_positions[3 * (n - 1)], P2, sizeof(double) * 3);
-
-    free(x);free(x_init);free(x_relaxed);free(s0_init_scaled);
-    free(s0_post_init);free(s0_post_relax);free(s0_post_newton_aug);    
-    return status;
-}
-
-DLL_EXPORT int solve_rope_tension_arc(
-    const double* P1, const double* P2,
-    int n, double total_mass,
-    double rope_diameter, double youngs_modulus,
-    const double* g_vec,
-    double F_target,                        // input: desired endpoint force magnitude
-    double* out_positions,                  // output: node positions (n*3)
-    double* out_length_factor,              // output: lambda
-    double* F_P1_out,                       // output: endpoint force on P1
-    double* F_P2_out,                       // output: endpoint force on P2
-    int* Status_newton,                     // output: status of best solve
-    int debug_level                         // debug print level
-)
-{
-    CURRENT_LOG_LEVEL = debug_level;
-
-    const double tol = 1e-3;
-    const int max_iter = 30;
-    double lambda_min = 1.01;
-    double lambda_max = 2.5;
-    double lambda_mid = 1.6;
-
-    double best_error = 1e20;
-    double best_lambda = lambda_min;
-
-    double* temp_positions = malloc(n * 3 * sizeof(double));
-    double best_positions[n * 3];
-    double best_F_P1[3] = {0}, best_F_P2[3] = {0};
-    int best_status = -99;
-
-    for (int iter = 0; iter < 2; ++iter) {  //max_iter
-        lambda_mid = 0.5 * (lambda_min + lambda_max);
-
-        double F_P1[3], F_P2[3];
-        int status;
-
-        status = solve_rope_arc_length(
-            P1, P2, n, total_mass, lambda_mid,
-            rope_diameter, youngs_modulus,
-            g_vec,
-            temp_positions,
-            &lambda_mid,
-            F_P1,
-            F_P2,
-            Status_newton
-        );
-
-        if (status != 0 || *Status_newton != 0) {
-            log_warn("Arc solve failed at λ = %.5f (status = %d)\n", lambda_mid, status);
-            lambda_min = lambda_mid; // try a longer rope
-            continue;
-        }
-
-        double force_mag = sqrt(F_P1[0]*F_P1[0] + F_P1[1]*F_P1[1] + F_P1[2]*F_P1[2]);
-        double error = force_mag - F_target;
-
-        log_info("λ = %.5f, |F_P1| = %.5f, Δ = %.5f\n", lambda_mid, force_mag, error);
-
-        if (fabs(error) < tol) {
-            *out_length_factor = lambda_mid;
-            memcpy(out_positions, temp_positions, n * 3 * sizeof(double));
-            memcpy(F_P1_out, F_P1, 3 * sizeof(double));
-            memcpy(F_P2_out, F_P2, 3 * sizeof(double));
-            *Status_newton = status;
-            free(temp_positions);
-            return 0;  // success
-        }
-
-        // store best
-        if (fabs(error) < best_error) {
-            best_error = fabs(error);
-            best_lambda = lambda_mid;
-            memcpy(best_positions, temp_positions, n * 3 * sizeof(double));
-            memcpy(best_F_P1, F_P1, 3 * sizeof(double));
-            memcpy(best_F_P2, F_P2, 3 * sizeof(double));
-            best_status = status;
-        }
-
-        if (error > 0) {
-            lambda_max = lambda_mid;  // too tight, reduce length
-        } else {
-            lambda_min = lambda_mid;  // too slack, increase length
-        }
-    }
-
-    // fallback if convergence not achieved
-    log_warn("Line search failed to converge (best error %.6f)\n", best_error);
-
-    *out_length_factor = best_lambda;
-    memcpy(out_positions, best_positions, n * 3 * sizeof(double));
-    memcpy(F_P1_out, best_F_P1, 3 * sizeof(double));
-    memcpy(F_P2_out, best_F_P2, 3 * sizeof(double));
-    *Status_newton = best_status;
-
-    free(temp_positions);
-    return SOLVE_ERROR_LINE_SEARCH_FAILED;
+    if (*Status_dynamic != 0) return *Status_dynamic;
+    if (*Status_newton != 0) return *Status_newton;
+    if (*Status_dynamic == 0 && *Status_newton == 0) return 0;
+    else return -1;
 }
 
 DLL_EXPORT int generate_lambda_force_table(
@@ -1576,25 +915,49 @@ DLL_EXPORT int generate_lambda_force_table(
     double* L_dyn_out,           // Output: Dynamic length [num_samples]
     double* L_newton_out,        // Output: Newton length [num_samples]
     int* status_dynamic_out,     // Output: dynamic status [num_samples]
-    int* status_newton_out       // Output: newton status [num_samples]
+    int* status_newton_out,      // Output: newton status [num_samples]
+    int debug_level              // Optional debug level (default: 0, no debug info)
 )
 {
+    CURRENT_LOG_LEVEL = debug_level;
+
     if (!P1 || !P2 || !g_vec || !lambda_out || !F_P1_n_out || !F_P2_n_out || !F_P1_w_out || !F_P2_w_out ||
         !L_init_out || !L_cat_out || !L_dyn_out || !L_newton_out || !status_dynamic_out || !status_newton_out)
         return SOLVE_ERROR_ALLOC;
 
-    if (num_samples < 2 || lambda_end <= lambda_start)
+    if (num_samples < 3 || lambda_end <= lambda_start)
         return INVALD_INPUT;
 
     double* positions = malloc((n - 1) * 3 * sizeof(double));
     if (!positions)
         return SOLVE_ERROR_ALLOC;
 
-    for (int i = 0; i < num_samples; ++i) {
-        double lambda = lambda_start + i * (lambda_end - lambda_start) / (num_samples - 1);
+        const double stretch_exponent = 3.0;    // how much to lift tail
+    
+    for (int i = 0; i < num_samples; ++i){ 
+        double t = (double)i / (num_samples - 1);
+        double lambda;
+
+        // Parameters
+        const double switch_point = 0.65;      // [0–1], where to switch to tail boost
+        const double bias_strength = 5.0;
+        const double front_exponent = 2.0;
+        const double tail_boost = 1.4;         // >1 → denser upper tail
+
+        if (t < switch_point) {
+            double s = (tanh(bias_strength * (t - 0.5)) + 1.0) / 2.0;
+            double stretched = pow(s, front_exponent);
+            lambda = lambda_start + (lambda_end - lambda_start) * (switch_point * stretched);
+        } else {
+            // Linear taper in [switch_point, 1]
+            double u = (t - switch_point) / (1.0 - switch_point);  // ∈ [0, 1]
+            double linear_tail = switch_point + (1.0 - switch_point) * pow(u, tail_boost);
+            lambda = lambda_start + (lambda_end - lambda_start) * linear_tail;
+        }
+        lambda_out[i] = lambda;
 
         double F_P1_n[3], F_P2_n[3], F_P1_w[3], F_P2_w[3];
-        double Length_initial, Length_cat, Length_dynamic, Length_newton;
+        double Length_initial = NAN, Length_cat = 0.0, Length_dynamic = NAN, Length_newton = NAN;
         int status_dynamic = -999, status_newton = -999;
 
         int status = solve_rope_length(
@@ -1605,10 +968,12 @@ DLL_EXPORT int generate_lambda_force_table(
             F_P1_w, F_P2_w,
             &Length_initial, &Length_cat, &Length_dynamic, &Length_newton,
             &status_dynamic, &status_newton,
-            0  // debug_level
-        );
+            debug_level);
 
-        lambda_out[i] = lambda;
+        if (status != 0) {
+            free(positions);
+            return status;
+        }
 
         for (int j = 0; j < 3; ++j) {
             F_P1_n_out[i * 3 + j] = F_P1_n[j];

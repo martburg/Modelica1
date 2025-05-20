@@ -1,9 +1,76 @@
+# -*- coding: utf-8 -*-
+"""
+@file    generate_lambda_force_table_example.py
+@brief   Python wrapper and visualizer for rope tension vs. length factor data using DLL
+
+This script interfaces with the `solve_rope_length_lapak.dll` shared library to generate
+a force vs. length factor table for a 3D spring-mass rope system. It computes endpoint forces
+and rope lengths under varying stretch factors and visualizes the results.
+
+The underlying DLL function `generate_lambda_force_table` performs:
+  - Initialization of node positions for given endpoints, rope parameters, and gravity.
+  - Dynamic relaxation to estimate equilibrium shape.
+  - Newton refinement to improve convergence.
+  - Decomposition of endpoint forces via Newton and weight-based methods.
+  - Recording of diagnostic outputs, including solver status and length metrics.
+
+@note This script requires:
+  - A compiled DLL (solve_rope_length_lapak.dll)
+  - Numpy
+  - Matplotlib
+  - ctypes (standard in Python)
+
+@dependencies
+  - numpy
+  - matplotlib
+  - ctypes
+
+@functions
+  - plot_lambda_force_table: Plots magnitude of endpoint forces and computed rope lengths
+    against the length factor λ, highlighting failed solver results.
+
+@example
+  Run this script directly to generate and plot rope force and length data:
+      python generate_lambda_force_table_example.py
+
+@parameters
+  P1               : 3D coordinates of first rope endpoint [m]
+  P2               : 3D coordinates of second rope endpoint [m]
+  n                : Number of nodes (discrete masses)
+  total_mass       : Total rope mass [kg]
+  rope_diameter    : Rope diameter [m]
+  youngs_modulus   : Young's modulus of rope material [Pa]
+  g_vec            : Gravity vector [m/s^2]
+  lambda_start     : Starting value of stretch factor λ
+  lambda_end       : Ending value of stretch factor λ
+  num_samples      : Number of λ values sampled between lambda_start and lambda_end
+
+@outputs
+  lambda_out       : Array of sampled λ values
+  F_P1_n_out       : Endpoint forces at P1 (Newton method) [N]
+  F_P2_n_out       : Endpoint forces at P2 (Newton method) [N]
+  F_P1_w_out       : Endpoint forces at P1 (weight-based) [N]
+  F_P2_w_out       : Endpoint forces at P2 (weight-based) [N]
+  L_init_out       : Initial rope length before relaxation [m]
+  L_cat_out        : Rope length estimated from catenary initializer [m]
+  L_dyn_out        : Rope length after dynamic relaxation [m]
+  L_newton_out     : Final rope length after Newton solver [m]
+  status_dynamic_out : Solver status for dynamic relaxation (0 = success)
+  status_newton_out  : Solver status for Newton refinement (0 = success)
+
+@author
+  Martin Burger
+
+@date
+  2025-05-20
+"""
+
 import ctypes
 import numpy as np
 import matplotlib.pyplot as plt
 
 # === Load DLL ===
-dll_path = "./Resources/Library/solve_rope_length_v09_lapak.so"
+dll_path = "./Resources/Library/solve_rope_length_lapak.dll"
 lib = ctypes.CDLL(dll_path)
 
 # === Define DLL function signature ===
@@ -84,6 +151,55 @@ def plot_lambda_force_table(
     status_dynamic_out, status_newton_out,
     force_clip_threshold=None  # New: optional clipping threshold
 ):
+    """
+    @brief
+    Plot force magnitudes and rope lengths versus stretch factor λ.
+
+    This function visualizes the output of the `generate_lambda_force_table` function,
+    showing both the magnitudes of endpoint forces and the corresponding rope lengths
+    for a range of λ (length factors). It highlights failed solver cases and optionally
+    clips force magnitudes to improve plot readability.
+
+    @param[in] lambda_out
+        Array of λ values used during the table generation (shape: [num_samples]).
+
+    @param[in] F_P1_n_out
+        Flat array of Newton-based force vectors at endpoint P1 (shape: [num_samples * 3]).
+
+    @param[in] F_P2_n_out
+        Flat array of Newton-based force vectors at endpoint P2 (shape: [num_samples * 3]).
+
+    @param[in] F_P1_w_out
+        Flat array of weight-partitioned force vectors at endpoint P1 (shape: [num_samples * 3]).
+
+    @param[in] F_P2_w_out
+        Flat array of weight-partitioned force vectors at endpoint P2 (shape: [num_samples * 3]).
+
+    @param[in] L_dyn_out
+        Rope lengths after dynamic relaxation (shape: [num_samples]).
+
+    @param[in] L_newton_out
+        Final rope lengths after Newton refinement (shape: [num_samples]).
+
+    @param[in] status_dynamic_out
+        Solver status codes for dynamic relaxation (0 = success) (shape: [num_samples]).
+
+    @param[in] status_newton_out
+        Solver status codes for Newton refinement (0 = success) (shape: [num_samples]).
+
+    @param[in] force_clip_threshold
+        Optional float value. If provided, clips all force magnitudes to this maximum value
+        to avoid skewing the plot. Useful for better visual comparison.
+
+    @returns
+        Displays two vertically stacked plots:
+        - Top: Force magnitude (‖F‖) vs. λ, for both Newton and weight-based decompositions.
+        - Bottom: Rope length vs. λ, showing results from dynamic and Newton phases.
+
+    @note
+        Failed solver outputs (status ≠ 0) are marked with red (dynamic) and black (Newton)
+        'x' symbols in both plots to aid in diagnostics.
+    """
     num_samples = len(lambda_out)
 
     # === Compute magnitudes ===
